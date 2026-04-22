@@ -1,0 +1,63 @@
+{
+  "name": "cloudflare-copilot-models",
+  "displayName": "Cloudflare Models for Copilot",
+  "description": "Automatically surfaces all Cloudflare Workers AI models in VS Code Copilot Chat",
+  "version": "0.0.1",
+  "publisher": "chr33s",
+  "engines": { "vscode": "^1.99.0" },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Cloudflare Copilot Models",
+      "properties": {
+        "cloudflareCopilot.accountId": {
+          "type": "string",
+          "description": "Your Cloudflare Account ID"
+        },
+        "cloudflareCopilot.apiKey": {
+          "type": "string",
+          "markdownDescription": "Your Cloudflare API Key. Consider using VS Code's secret storage for security.",
+          "description": "Your Cloudflare API Key"
+        },
+        "cloudflareCopilot.gatewayId": {
+          "type": "string",
+          "description": "Your Cloudflare AI Gateway ID (optional). When set, all model requests are routed through the gateway for analytics, caching, and rate limiting."
+        },
+        "cloudflareCopilot.modelFilter": {
+          "type": "string",
+          "enum": ["all", "text-generation"],
+          "default": "text-generation",
+          "description": "Filter which Cloudflare model types to surface in Copilot Chat."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "cloudflareCopilot.refreshModels",
+        "title": "Cloudflare: Refresh Models"
+      },
+      {
+        "command": "cloudflareCopilot.storeApiKey",
+        "title": "Cloudflare: Store API Key Securely"
+      }
+    ],
+    "languageModelChatProviders": [
+      {
+        "vendor": "cloudflare",
+        "name": "Cloudflare"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.99.0",
+    "typescript": "^5.0.0"
+  }
+}
