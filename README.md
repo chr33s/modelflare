@@ -32,7 +32,7 @@ Automatically fetches and surfaces all **Cloudflare Workers AI** models in the V
 ```
 VS Code Copilot Chat
        ↓
-vscode.lm.registerChatModelProvider (one per model)
+vscode.lm.registerLanguageModelChatProvider (single provider exposing all discovered models)
        ↓
 Cloudflare AI Gateway  (if gatewayId set)
        ↓
