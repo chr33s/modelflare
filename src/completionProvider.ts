@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import { CloudflareModel } from './cloudflareClient';
 
+const COMPLETION_PREFIX_LINES = 120;
+const COMPLETION_SUFFIX_LINES = 40;
+const NON_CODE_LANGUAGE_IDS = new Set(['plaintext', 'markdown', 'json', 'jsonc', 'log']);
+
 function buildEndpoint(model: CloudflareModel, accountId: string, gatewayId?: string): string {
   if (gatewayId) {
     return `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/workers-ai/${model.id}`;
@@ -9,8 +13,9 @@ function buildEndpoint(model: CloudflareModel, accountId: string, gatewayId?: st
 }
 
 function buildCompletionPrompt(document: vscode.TextDocument, position: vscode.Position): string {
-  const prefixStart = new vscode.Position(Math.max(0, position.line - 120), 0);
-  const suffixEnd = new vscode.Position(Math.min(document.lineCount - 1, position.line + 40), 0);
+  const prefixStart = new vscode.Position(Math.max(0, position.line - COMPLETION_PREFIX_LINES), 0);
+  const suffixEndLine = Math.min(document.lineCount - 1, position.line + COMPLETION_SUFFIX_LINES);
+  const suffixEnd = document.lineAt(suffixEndLine).range.end;
   const before = document.getText(new vscode.Range(prefixStart, position));
   const after = document.getText(new vscode.Range(position, suffixEnd));
 
@@ -68,6 +73,7 @@ async function fetchCompletion(
       throw new Error(`Cloudflare completion request failed (${response.status}): ${raw}`);
     }
 
+    // Cloudflare Workers AI responses may be wrapped as result.response or returned as response.
     const parsed = JSON.parse(raw) as { result?: { response?: string }; response?: string };
     return (parsed?.result?.response ?? parsed?.response ?? '').trimEnd();
   } catch (error) {
@@ -87,19 +93,18 @@ export function registerCompletionProvider(
   apiKey: string,
   gatewayId?: string
 ): vscode.Disposable | undefined {
-  const completionModel = models.find((model) => model.task?.id === 'text-generation') ?? models[0];
+  const completionModel = models.find((model) => model.task?.id === 'text-generation');
   if (!completionModel) {
     return undefined;
   }
 
-  return vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, {
+  return vscode.languages.registerInlineCompletionItemProvider({ scheme: 'file' }, {
     async provideInlineCompletionItems(document, position, _context, token) {
       if (token.isCancellationRequested || position.line < 0) {
         return [];
       }
 
-      const currentLinePrefix = document.lineAt(position).text.slice(0, position.character);
-      if (!currentLinePrefix.trim()) {
+      if (NON_CODE_LANGUAGE_IDS.has(document.languageId)) {
         return [];
       }
 
