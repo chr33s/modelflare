@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import { fetchCloudflareModels } from './cloudflareClient';
 import { registerModelProvider } from './modelProvider';
+import { registerCompletionProvider } from './completionProvider';
 
 const SECRET_KEY = 'cloudflare-api-key';
 let providerRegistration: vscode.Disposable | undefined;
+let completionRegistration: vscode.Disposable | undefined;
 
 function normalizeApiKey(key: string): string {
   return key.trim().replace(/^Bearer\s+/i, '');
@@ -23,6 +25,13 @@ function disposeProviderRegistration(): void {
   if (providerRegistration) {
     providerRegistration.dispose();
     providerRegistration = undefined;
+  }
+}
+
+function disposeCompletionRegistration(): void {
+  if (completionRegistration) {
+    completionRegistration.dispose();
+    completionRegistration = undefined;
   }
 }
 
@@ -60,6 +69,8 @@ async function loadAndRegisterModels(context: vscode.ExtensionContext): Promise<
 
         disposeProviderRegistration();
         providerRegistration = registerModelProvider(models, accountId, apiKey, gatewayId);
+        disposeCompletionRegistration();
+        completionRegistration = registerCompletionProvider(models, accountId, apiKey, gatewayId);
 
         vscode.window.showInformationMessage(
           `✅ Cloudflare: ${models.length} model${models.length !== 1 ? 's' : ''} registered in Copilot Chat`
@@ -100,6 +111,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Ensure provider registration is disposed on deactivate without duplicating subscriptions on refresh.
   context.subscriptions.push(new vscode.Disposable(() => disposeProviderRegistration()));
+  context.subscriptions.push(new vscode.Disposable(() => disposeCompletionRegistration()));
 
   // Auto-load on activation
   await loadAndRegisterModels(context);
@@ -107,4 +119,5 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {
   disposeProviderRegistration();
+  disposeCompletionRegistration();
 }

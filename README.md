@@ -1,6 +1,6 @@
 # Cloudflare Models for Copilot
 
-Automatically fetches and surfaces all **Cloudflare Workers AI** models in the VS Code Copilot Chat model picker.
+Automatically fetches and surfaces all **Cloudflare Workers AI** models in the VS Code Copilot Chat model picker and can use the same routing path for inline code completions.
 
 ## Features
 
@@ -8,6 +8,7 @@ Automatically fetches and surfaces all **Cloudflare Workers AI** models in the V
 - 🔒 Secure API key storage via VS Code Secret Storage
 - 🌐 Optional routing through **Cloudflare AI Gateway** for analytics, caching & rate limiting
 - 🔃 Manual refresh via command palette
+- ✨ Inline code completions powered by discovered Cloudflare text-generation models
 
 ## Setup
 
@@ -16,7 +17,7 @@ Automatically fetches and surfaces all **Cloudflare Workers AI** models in the V
 3. Open VS Code Settings (`cloudflareCopilot`) and set:
    - `cloudflareCopilot.accountId` — your Cloudflare Account ID
    - `cloudflareCopilot.gatewayId` — *(optional)* your AI Gateway ID
-4. Models will appear automatically in the **Copilot Chat model picker**
+4. Models will appear automatically in the **Copilot Chat model picker** and are also used for inline code completions
 
 ## Settings
 
