@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as https from 'https';
 import { CloudflareModel } from './cloudflareClient';
 
 interface ProviderModelInformation extends vscode.LanguageModelChatInformation {
@@ -11,32 +10,6 @@ function buildEndpoint(model: CloudflareModel, accountId: string, gatewayId?: st
     return `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/workers-ai/${model.id}`;
   }
   return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model.id}`;
-}
-
-function httpsPost(url: string, headers: Record<string, string>, body: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: 'POST',
-      headers: {
-        ...headers,
-        'Content-Length': Buffer.byteLength(body)
-      }
-    };
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => (data += chunk));
-      res.on('end', () => resolve(data));
-      res.on('error', reject);
-    });
-
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
 }
 
 function getMessageText(message: vscode.LanguageModelChatRequestMessage): string {
@@ -104,21 +77,35 @@ export function registerModelProvider(
       }));
 
       const body = JSON.stringify({ messages: formattedMessages });
+      const abortController = new AbortController();
+      const cancellationDisposable = token.onCancellationRequested(() => abortController.abort());
+      let raw: string;
 
-      const raw = await httpsPost(
-        endpoint,
-        {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body
-      );
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body,
+          signal: abortController.signal
+        });
+
+        raw = await response.text();
+        if (!response.ok) {
+          throw new Error(`Cloudflare model request failed (${response.status}): ${raw}`);
+        }
+      } finally {
+        cancellationDisposable.dispose();
+      }
 
       let parsed: { result?: { response?: string }; response?: string };
       try {
         parsed = JSON.parse(raw);
-      } catch {
-        throw new Error(`Failed to parse Cloudflare response: ${raw}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown error';
+        throw new Error(`Failed to parse Cloudflare response (${message}): ${raw}`);
       }
 
       if (token.isCancellationRequested) {
