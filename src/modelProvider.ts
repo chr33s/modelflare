@@ -79,7 +79,7 @@ export function registerModelProvider(
       const body = JSON.stringify({ messages: formattedMessages });
       const abortController = new AbortController();
       const cancellationDisposable = token.onCancellationRequested(() => abortController.abort());
-      let raw: string;
+      let raw = '';
 
       try {
         const response = await fetch(endpoint, {
