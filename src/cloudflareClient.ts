@@ -1,13 +1,13 @@
 export interface CloudflareModel {
   id: string;       // e.g. "@cf/meta/llama-3.1-8b-instruct"
-  name: string;
-  description: string;
-  task: {
+  name?: string;
+  description?: string;
+  task?: {
     id: string;
-    name: string;   // e.g. "Text Generation"
-    description: string;
+    name?: string;   // e.g. "Text Generation"
+    description?: string;
   };
-  properties: Array<{ property_id: string; value: string }>;
+  properties?: Array<{ property_id: string; value: string }>;
 }
 
 interface CloudflareModelsResponse {
@@ -52,6 +52,6 @@ export async function fetchCloudflareModels(
   }
 
   return json.result.filter(m =>
-    m.task?.name?.toLowerCase().replace(/\s+/g, '-') === filter
+    m.task?.id === filter
   );
 }

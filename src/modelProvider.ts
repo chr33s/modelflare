@@ -15,7 +15,7 @@ function buildEndpoint(model: CloudflareModel, accountId: string, gatewayId?: st
 function getMessageText(message: vscode.LanguageModelChatRequestMessage): string {
   return message.content
     .filter((part): part is vscode.LanguageModelTextPart => part instanceof vscode.LanguageModelTextPart)
-    .map(part => part.value)
+    .map((part: vscode.LanguageModelTextPart) => part.value)
     .join('');
 }
 
@@ -50,21 +50,28 @@ export function registerModelProvider(
   }));
 
   const provider: vscode.LanguageModelChatProvider<ProviderModelInformation> = {
-    provideLanguageModelChatInformation(): ProviderModelInformation[] {
+    provideLanguageModelChatInformation(
+      _options: vscode.PrepareLanguageModelChatModelOptions,
+      _token: vscode.CancellationToken
+    ): ProviderModelInformation[] {
       return modelInfos;
     },
 
-    async provideTokenCount(_model, text): Promise<number> {
+    async provideTokenCount(
+      _model: ProviderModelInformation,
+      text: string | vscode.LanguageModelChatRequestMessage,
+      _token: vscode.CancellationToken
+    ): Promise<number> {
       const sourceText = typeof text === 'string' ? text : getMessageText(text);
       return Math.ceil(sourceText.length / 4);
     },
 
     async provideLanguageModelChatResponse(
-      model,
-      messages,
-      _options,
-      progress,
-      token
+      model: ProviderModelInformation,
+      messages: readonly vscode.LanguageModelChatRequestMessage[],
+      _options: vscode.ProvideLanguageModelChatResponseOptions,
+      progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+      token: vscode.CancellationToken
     ): Promise<void> {
       if (token.isCancellationRequested) {
         return;
@@ -96,6 +103,11 @@ export function registerModelProvider(
         if (!response.ok) {
           throw new Error(`Cloudflare model request failed (${response.status}): ${raw}`);
         }
+      } catch (error) {
+        if (token.isCancellationRequested && error instanceof DOMException && error.name === 'AbortError') {
+          return;
+        }
+        throw error;
       } finally {
         cancellationDisposable.dispose();
       }

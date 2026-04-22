@@ -5,13 +5,18 @@ import { registerModelProvider } from './modelProvider';
 const SECRET_KEY = 'cloudflare-api-key';
 let providerRegistration: vscode.Disposable | undefined;
 
+function normalizeApiKey(key: string): string {
+  return key.trim().replace(/^Bearer\s+/i, '');
+}
+
 async function getApiKey(context: vscode.ExtensionContext): Promise<string | undefined> {
   // Prefer secret storage over plain config
   const secret = await context.secrets.get(SECRET_KEY);
   if (secret) {
-    return secret;
+    return normalizeApiKey(secret);
   }
-  return vscode.workspace.getConfiguration('cloudflareCopilot').get<string>('apiKey');
+  const configuredKey = vscode.workspace.getConfiguration('cloudflareCopilot').get<string>('apiKey');
+  return configuredKey ? normalizeApiKey(configuredKey) : undefined;
 }
 
 function disposeProviderRegistration(): void {
@@ -35,7 +40,7 @@ async function loadAndRegisterModels(context: vscode.ExtensionContext): Promise<
           'Use the "Cloudflare: Store API Key Securely" command for secure key storage.',
         'Open Settings'
       )
-      .then((action) => {
+      .then((action: string | undefined) => {
         if (action === 'Open Settings') {
           vscode.commands.executeCommand('workbench.action.openSettings', 'cloudflareCopilot');
         }
@@ -55,7 +60,6 @@ async function loadAndRegisterModels(context: vscode.ExtensionContext): Promise<
 
         disposeProviderRegistration();
         providerRegistration = registerModelProvider(models, accountId, apiKey, gatewayId);
-        context.subscriptions.push(providerRegistration);
 
         vscode.window.showInformationMessage(
           `✅ Cloudflare: ${models.length} model${models.length !== 1 ? 's' : ''} registered in Copilot Chat`
@@ -86,12 +90,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         placeHolder: 'Bearer token from Cloudflare dashboard'
       });
       if (key) {
-        await context.secrets.store(SECRET_KEY, key);
+        const normalizedKey = normalizeApiKey(key);
+        await context.secrets.store(SECRET_KEY, normalizedKey);
         vscode.window.showInformationMessage('✅ Cloudflare API Key stored securely.');
         await loadAndRegisterModels(context);
       }
     })
   );
+
+  // Ensure provider registration is disposed on deactivate without duplicating subscriptions on refresh.
+  context.subscriptions.push(new vscode.Disposable(() => disposeProviderRegistration()));
 
   // Auto-load on activation
   await loadAndRegisterModels(context);
