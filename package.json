@@ -18,12 +18,17 @@
     "compile": "tsc -p ./",
     "fix": "oxfmt --write . && oxlint --fix --fix-suggestions --type-aware --type-check .",
     "package": "vsce package",
+    "pretest": "npm run compile",
+    "test": "vscode-test",
     "vscode:prepublish": "npm run compile",
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^25.0.0",
     "@types/vscode": "^1.99.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
     "oxfmt": "^0.46.0",
     "oxlint": "^1.61.0",

@@ -114,7 +114,7 @@ function serializeToolResultContent(part: vscode.LanguageModelToolResultPart): s
   return content.length > 0 ? content : "{}";
 }
 
-function toCloudflareMessages(
+export function toCloudflareMessages(
   messages: readonly vscode.LanguageModelChatRequestMessage[],
 ): CloudflareChatMessage[] {
   const cloudflareMessages: CloudflareChatMessage[] = [];
@@ -175,7 +175,7 @@ function toCloudflareMessages(
   return cloudflareMessages;
 }
 
-function toCloudflareTools(
+export function toCloudflareTools(
   tools: readonly vscode.LanguageModelChatTool[] | undefined,
 ): CloudflareToolDefinition[] | undefined {
   if (!tools || tools.length === 0) {
@@ -192,7 +192,7 @@ function toCloudflareTools(
   }));
 }
 
-function toCloudflareToolChoice(
+export function toCloudflareToolChoice(
   toolMode: vscode.LanguageModelChatToolMode,
   tools: readonly vscode.LanguageModelChatTool[] | undefined,
 ): CloudflareToolChoiceMode | undefined {
@@ -298,7 +298,7 @@ function resolveCapability(model: CloudflareModel, options: CapabilityResolution
   );
 }
 
-function inferCapabilities(model: CloudflareModel): vscode.LanguageModelChatCapabilities {
+export function inferCapabilities(model: CloudflareModel): vscode.LanguageModelChatCapabilities {
   return {
     toolCalling: resolveCapability(model, {
       explicitValue: model.detectedCapabilities?.toolCalling,
@@ -319,7 +319,7 @@ function toShortModelName(modelHandle: string): string {
   return lastSegment || modelHandle;
 }
 
-function getModelDisplayName(model: CloudflareModel, modelHandle: string): string {
+export function getModelDisplayName(model: CloudflareModel, modelHandle: string): string {
   const name = model.name?.trim();
   if (name && name.startsWith("@")) {
     return toShortModelName(name);
@@ -332,7 +332,7 @@ function getModelDisplayName(model: CloudflareModel, modelHandle: string): strin
   return modelHandle.startsWith("@") ? toShortModelName(modelHandle) : modelHandle;
 }
 
-function getModelDetail(
+export function getModelDetail(
   model: CloudflareModel,
   capabilities: vscode.LanguageModelChatCapabilities,
 ): string | undefined {

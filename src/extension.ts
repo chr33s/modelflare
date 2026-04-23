@@ -11,7 +11,7 @@ let completionRegistration: vscode.Disposable | undefined;
 let inspectOutputChannel: vscode.OutputChannel | undefined;
 let pendingModelLoad: Thenable<void> | undefined;
 
-function normalizeApiKey(key: string): string {
+export function normalizeApiKey(key: string): string {
   return key.trim().replace(/^Bearer\s+/i, "");
 }
 
@@ -49,7 +49,7 @@ function getOutputChannel(): vscode.OutputChannel {
   return inspectOutputChannel;
 }
 
-function getNoModelsFoundMessage(modelFilter: string): string {
+export function getNoModelsFoundMessage(modelFilter: string): string {
   if (modelFilter === "all") {
     return "Cloudflare returned no models for this account.";
   }

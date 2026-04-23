@@ -7,7 +7,10 @@ const COMPLETION_SUFFIX_LINES = 40;
 const NON_CODE_LANGUAGE_IDS = new Set(["plaintext", "markdown", "json", "jsonc", "log"]);
 const TEXT_GENERATION_TASK = "Text Generation";
 
-function buildCompletionPrompt(document: vscode.TextDocument, position: vscode.Position): string {
+export function buildCompletionPrompt(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): string {
   const prefixStart = new vscode.Position(Math.max(0, position.line - COMPLETION_PREFIX_LINES), 0);
   const suffixEndLine = Math.min(document.lineCount - 1, position.line + COMPLETION_SUFFIX_LINES);
   const suffixEnd = document.lineAt(suffixEndLine).range.end;
