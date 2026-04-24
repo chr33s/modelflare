@@ -1,7 +1,7 @@
 {
   "name": "cloudflare-copilot-models",
   "displayName": "Cloudflare Models for Copilot",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Automatically surfaces all Cloudflare Workers AI models in VS Code Copilot Chat",
   "categories": [
     "AI",
@@ -60,6 +60,11 @@
           ],
           "default": "Text Generation",
           "description": "Filter which Cloudflare model types to surface in Copilot Chat."
+        },
+        "cloudflareCopilot.completionModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model handle, name, or id to use for inline completions. When unset, the extension picks a Text Generation model using completion-focused heuristics."
         }
       }
     },
@@ -70,11 +75,11 @@
       },
       {
         "command": "cloudflareCopilot.inspectModels",
-        "title": "Cloudflare: Inspect Registered Chat Models"
+        "title": "Cloudflare: Inspect Models"
       },
       {
         "command": "cloudflareCopilot.storeApiKey",
-        "title": "Cloudflare: Store API Key Securely"
+        "title": "Cloudflare: Store Credentials"
       }
     ],
     "languageModelChatProviders": [

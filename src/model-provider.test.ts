@@ -4,6 +4,7 @@ import {
   inferCapabilities,
   getModelDisplayName,
   getModelDetail,
+  registerModelProvider,
   toCloudflareMessages,
   toCloudflareTools,
   toCloudflareToolChoice,
@@ -193,6 +194,61 @@ suite("model-provider", () => {
     });
   });
 
+  suite("provider model metadata", () => {
+    test("derives family, version, and category from the model handle", () => {
+      const provider = registerModelProvider();
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              name: "@cf/meta/llama-3.1-8b-instruct",
+              task: { id: "t", name: "Text Generation" },
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.family, "meta/llama");
+        assert.strictEqual(model.version, "3.1");
+        assert.strictEqual(model.category?.label, "Meta");
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("orders richer stable chat models ahead of preview variants", () => {
+      const provider = registerModelProvider();
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              id: "preview-id",
+              name: "@cf/meta/llama-4-preview",
+              description: "Experimental preview model",
+              task: { id: "t", name: "Text Generation" },
+            }),
+            makeModel({
+              id: "stable-id",
+              name: "@cf/meta/llama-3.3-8b-instruct",
+              task: { id: "t", name: "Text Generation" },
+              detectedCapabilities: { toolCalling: true, structuredOutput: true },
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        assert.strictEqual(provider.getRegisteredModels()[0].id, "@cf/meta/llama-3.3-8b-instruct");
+      } finally {
+        provider.dispose();
+      }
+    });
+  });
+
   // -------------------------------------------------------------------------
   // toCloudflareTools
   // -------------------------------------------------------------------------
@@ -344,6 +400,44 @@ suite("model-provider", () => {
       assert.strictEqual(msgs[0].content, "result-value");
     });
 
+    test("maps text data parts into message text content", () => {
+      const dataPart = vscode.LanguageModelDataPart.text("attached context", "text/plain");
+      const msgs = toCloudflareMessages([userMsg(dataPart)]);
+
+      assert.deepStrictEqual(msgs, [{ role: "user", content: "attached context" }]);
+    });
+
+    test("maps image data parts into Cloudflare image_url content", () => {
+      const imagePart = vscode.LanguageModelDataPart.image(Uint8Array.from([1, 2, 3]), "image/png");
+      const msgs = toCloudflareMessages([userMsg(imagePart)]);
+
+      assert.strictEqual(msgs.length, 1);
+      assert.strictEqual(msgs[0].role, "user");
+      assert.ok(Array.isArray(msgs[0].content));
+      if (!Array.isArray(msgs[0].content)) {
+        assert.fail("Expected structured content array");
+      }
+
+      assert.strictEqual(msgs[0].content[0].type, "image_url");
+      assert.ok(msgs[0].content[0].image_url.url.startsWith("data:image/png;base64,"));
+    });
+
+    test("serializes JSON data parts inside tool results", () => {
+      const toolResult = new vscode.LanguageModelToolResultPart("call-json", [
+        vscode.LanguageModelDataPart.json({ ok: true }),
+      ]);
+      const msgs = toCloudflareMessages([userMsg(toolResult)]);
+
+      assert.strictEqual(msgs.length, 1);
+      assert.strictEqual(msgs[0].role, "tool");
+      assert.ok(typeof msgs[0].content === "string");
+      if (typeof msgs[0].content !== "string") {
+        assert.fail("Expected serialized tool result content");
+      }
+
+      assert.ok(/"ok"\s*:\s*true/.test(msgs[0].content), msgs[0].content);
+    });
+
     test("preserves message order across multiple messages", () => {
       const msgs = toCloudflareMessages([
         userMsg(new vscode.LanguageModelTextPart("first")),
@@ -362,6 +456,98 @@ suite("model-provider", () => {
       ]);
       const msgs = toCloudflareMessages([userMsg(toolResult)]);
       assert.strictEqual(msgs[0].content, "{}");
+    });
+  });
+
+  suite("provider token accounting", () => {
+    test("derives effective maxInputTokens from model metadata", () => {
+      const provider = registerModelProvider();
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              properties: [{ property_id: "context window", value: "16k" }],
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.maxInputTokens, 15980);
+        assert.strictEqual(model.maxOutputTokens, 4096);
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("counts message overhead for text and data parts", async () => {
+      const provider = registerModelProvider();
+      const tokenSource = new vscode.CancellationTokenSource();
+
+      try {
+        provider.updateModels([makeModel()], "acct", "key");
+        const model = provider.getRegisteredModels()[0];
+        const message: vscode.LanguageModelChatRequestMessage = {
+          role: vscode.LanguageModelChatMessageRole.User,
+          name: "tester",
+          content: [
+            new vscode.LanguageModelTextPart("hello"),
+            vscode.LanguageModelDataPart.text("world", "text/plain"),
+          ],
+        };
+
+        const tokenCount = await provider.provideTokenCount(model, message, tokenSource.token);
+        assert.ok(
+          tokenCount > 4,
+          `Expected message token count to include overhead, got ${tokenCount}`,
+        );
+      } finally {
+        tokenSource.dispose();
+        provider.dispose();
+      }
+    });
+
+    test("rejects requests that exceed the estimated context window", async () => {
+      const provider = registerModelProvider();
+      const tokenSource = new vscode.CancellationTokenSource();
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              properties: [{ property_id: "context window", value: "1k" }],
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        const message: vscode.LanguageModelChatRequestMessage = {
+          role: vscode.LanguageModelChatMessageRole.User,
+          name: undefined,
+          content: [new vscode.LanguageModelTextPart("x".repeat(8_000))],
+        };
+
+        await assert.rejects(
+          async () =>
+            provider.provideLanguageModelChatResponse(
+              model,
+              [message],
+              {
+                toolMode: vscode.LanguageModelChatToolMode.Auto,
+              },
+              { report: () => {} },
+              tokenSource.token,
+            ),
+          /exceeds the estimated context window/,
+        );
+      } finally {
+        tokenSource.dispose();
+        provider.dispose();
+      }
     });
   });
 });

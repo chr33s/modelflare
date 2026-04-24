@@ -2,14 +2,46 @@ import * as vscode from "vscode";
 import { enrichCloudflareModelsWithCapabilities, fetchCloudflareModels } from "./cloudflare-client";
 import { registerModelProvider, RegisteredModelProvider } from "./model-provider";
 import { registerCompletionProvider } from "./completion-provider";
+import {
+  getRecentCloudflareRequestMetrics,
+  AggregatedCloudflareRequestMetric,
+  RecordedCloudflareRequestMetric,
+  summarizeCloudflareRequestMetrics,
+} from "./request-metrics";
 
 const SECRET_KEY = "cloudflare-api-key";
-const CLOUDLFARE_VENDOR = "cloudflare";
+const VENDOR = "cloudflare";
+const MODEL_RELOAD_DEBOUNCE_MS = 300;
 
 let providerRegistration: RegisteredModelProvider | undefined;
 let completionRegistration: vscode.Disposable | undefined;
 let inspectOutputChannel: vscode.OutputChannel | undefined;
 let pendingModelLoad: Thenable<void> | undefined;
+let pendingReloadTimer: ReturnType<typeof setTimeout> | undefined;
+let queuedModelReload:
+  | {
+      context: vscode.ExtensionContext;
+      options: LoadModelsOptions;
+    }
+  | undefined;
+
+interface LoadModelsOptions {
+  readonly notifyOnMissingConfiguration: boolean;
+  readonly notifyOnSuccess: boolean;
+  readonly notifyOnError: boolean;
+}
+
+const INTERACTIVE_LOAD_OPTIONS: LoadModelsOptions = {
+  notifyOnMissingConfiguration: true,
+  notifyOnSuccess: true,
+  notifyOnError: true,
+};
+
+const AUTOMATIC_LOAD_OPTIONS: LoadModelsOptions = {
+  notifyOnMissingConfiguration: false,
+  notifyOnSuccess: false,
+  notifyOnError: false,
+};
 
 export function normalizeApiKey(key: string): string {
   return key.trim().replace(/^Bearer\s+/i, "");
@@ -41,6 +73,18 @@ function disposeCompletionRegistration(): void {
   }
 }
 
+function clearRegisteredModels(): void {
+  providerRegistration?.clearModels();
+  disposeCompletionRegistration();
+}
+
+function disposePendingReload(): void {
+  if (pendingReloadTimer) {
+    clearTimeout(pendingReloadTimer);
+    pendingReloadTimer = undefined;
+  }
+}
+
 function getOutputChannel(): vscode.OutputChannel {
   if (!inspectOutputChannel) {
     inspectOutputChannel = vscode.window.createOutputChannel("Cloudflare Copilot Models");
@@ -60,8 +104,33 @@ export function getNoModelsFoundMessage(modelFilter: string): string {
   );
 }
 
-async function loadAndRegisterModels(context: vscode.ExtensionContext): Promise<void> {
+export function shouldReloadForConfigurationChange(
+  event: vscode.ConfigurationChangeEvent,
+): boolean {
+  return event.affectsConfiguration("cloudflareCopilot");
+}
+
+export function shouldReloadForSecretChange(event: vscode.SecretStorageChangeEvent): boolean {
+  return event.key === SECRET_KEY;
+}
+
+function scheduleModelReload(
+  context: vscode.ExtensionContext,
+  options: LoadModelsOptions = AUTOMATIC_LOAD_OPTIONS,
+): void {
+  disposePendingReload();
+  pendingReloadTimer = setTimeout(() => {
+    pendingReloadTimer = undefined;
+    void loadAndRegisterModels(context, options);
+  }, MODEL_RELOAD_DEBOUNCE_MS);
+}
+
+async function loadAndRegisterModels(
+  context: vscode.ExtensionContext,
+  options: LoadModelsOptions = INTERACTIVE_LOAD_OPTIONS,
+): Promise<void> {
   if (pendingModelLoad) {
+    queuedModelReload = { context, options };
     return pendingModelLoad;
   }
 
@@ -69,20 +138,24 @@ async function loadAndRegisterModels(context: vscode.ExtensionContext): Promise<
   const accountId = config.get<string>("accountId");
   const gatewayId = config.get<string>("gatewayId");
   const modelFilter = config.get<string>("modelFilter") ?? "Text Generation";
+  const completionModel = config.get<string>("completionModel");
   const apiKey = await getApiKey(context);
 
   if (!accountId || !apiKey) {
-    vscode.window
-      .showWarningMessage(
-        "Cloudflare Copilot Models: Please set your Account ID and API Key. " +
-          'Use the "Cloudflare: Store API Key Securely" command for secure key storage.',
-        "Open Settings",
-      )
-      .then((action: string | undefined) => {
-        if (action === "Open Settings") {
-          vscode.commands.executeCommand("workbench.action.openSettings", "cloudflareCopilot");
-        }
-      });
+    clearRegisteredModels();
+    if (options.notifyOnMissingConfiguration) {
+      vscode.window
+        .showWarningMessage(
+          "Cloudflare Copilot Models: Please set your Account ID and API Key. " +
+            'Use the "Cloudflare: Store API Key Securely" command for secure key storage.',
+          "Open Settings",
+        )
+        .then((action: string | undefined) => {
+          if (action === "Open Settings") {
+            vscode.commands.executeCommand("workbench.action.openSettings", "cloudflareCopilot");
+          }
+        });
+    }
     return;
   }
 
@@ -113,16 +186,26 @@ async function loadAndRegisterModels(context: vscode.ExtensionContext): Promise<
           accountId,
           apiKey,
           gatewayId,
+          completionModel,
         );
 
-        vscode.window.showInformationMessage(
-          `✅ Cloudflare: ${enrichedModels.length} model${enrichedModels.length !== 1 ? "s" : ""} registered in Copilot Chat`,
-        );
+        if (options.notifyOnSuccess) {
+          vscode.window.showInformationMessage(
+            `✅ Cloudflare: ${enrichedModels.length} model${enrichedModels.length !== 1 ? "s" : ""} registered in Copilot Chat`,
+          );
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(`Cloudflare Models: Failed to load — ${message}`);
+        if (options.notifyOnError) {
+          vscode.window.showErrorMessage(`Cloudflare Models: Failed to load — ${message}`);
+        }
       } finally {
         pendingModelLoad = undefined;
+        const queuedReload = queuedModelReload;
+        queuedModelReload = undefined;
+        if (queuedReload) {
+          void loadAndRegisterModels(queuedReload.context, queuedReload.options);
+        }
       }
     },
   );
@@ -149,10 +232,112 @@ function formatRegisteredModel(
   return `${model.name} (${model.id}) | capabilities=${capabilities}${isUserSelectable}${category}${detail}`;
 }
 
+function formatUsageSummary(metric: RecordedCloudflareRequestMetric): string {
+  if (!metric.usage) {
+    return "";
+  }
+
+  const parts = [
+    typeof metric.usage.totalTokens === "number" ? `total=${metric.usage.totalTokens}` : undefined,
+    typeof metric.usage.promptTokens === "number"
+      ? `prompt=${metric.usage.promptTokens}`
+      : undefined,
+    typeof metric.usage.completionTokens === "number"
+      ? `completion=${metric.usage.completionTokens}`
+      : undefined,
+  ].filter((part): part is string => part !== undefined);
+
+  return parts.length > 0 ? ` | usage=${parts.join(",")}` : "";
+}
+
+function normalizeMetricErrorMessage(message: string, maxLength = 180): string {
+  const normalized = message.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function formatErrorSummary(metric: RecordedCloudflareRequestMetric): string {
+  if (metric.outcome !== "error") {
+    return "";
+  }
+
+  const status = typeof metric.errorStatus === "number" ? ` | status=${metric.errorStatus}` : "";
+  const errorMessage =
+    metric.errorMessage && metric.errorMessage.length > 0
+      ? ` | error=${normalizeMetricErrorMessage(metric.errorMessage)}`
+      : "";
+
+  return `${status}${errorMessage}`;
+}
+
+function formatLatestFailureSummary(summary: AggregatedCloudflareRequestMetric): string {
+  if (!summary.latestFailure) {
+    return " | latestFailure=none";
+  }
+
+  const status =
+    typeof summary.latestFailure.status === "number"
+      ? ` status=${summary.latestFailure.status}`
+      : "";
+  const errorMessage =
+    summary.latestFailure.message && summary.latestFailure.message.length > 0
+      ? ` error=${normalizeMetricErrorMessage(summary.latestFailure.message, 120)}`
+      : "";
+
+  return (
+    ` | latestFailure=${new Date(summary.latestFailure.recordedAt).toISOString()}` +
+    ` request=${summary.latestFailure.requestKind}${status}${errorMessage}`
+  );
+}
+
+function formatAverageMs(value: number | undefined): string {
+  if (typeof value !== "number") {
+    return "n/a";
+  }
+
+  return `${Math.round(value)}ms`;
+}
+
+function formatRate(value: number): string {
+  const percentage = value * 100;
+  const rounded = Number.isInteger(percentage) ? percentage.toFixed(0) : percentage.toFixed(1);
+  return `${rounded}%`;
+}
+
+export function formatRecordedRequestMetric(metric: RecordedCloudflareRequestMetric): string {
+  const ttft =
+    typeof metric.timeToFirstTextMs === "number" ? `${metric.timeToFirstTextMs}ms` : "n/a";
+  const fallback = metric.gatewayFallbackToDirect ? " | fallback=gateway->direct" : "";
+  return (
+    `${new Date(metric.recordedAt).toISOString()} | ${metric.requestKind} ${metric.modelHandle}` +
+    ` | outcome=${metric.outcome}` +
+    ` | transport=${metric.endpointKind}/${metric.deliveryMode}` +
+    ` | requestedStream=${metric.requestedStream}` +
+    ` | total=${metric.totalDurationMs}ms | ttft=${ttft}` +
+    `${fallback}${formatUsageSummary(metric)}${formatErrorSummary(metric)}`
+  );
+}
+
+export function formatRequestMetricSummary(summary: AggregatedCloudflareRequestMetric): string {
+  return (
+    `${summary.modelHandle} | total=${summary.totalCount}` +
+    ` success=${summary.successCount} error=${summary.errorCount} cancelled=${summary.cancelledCount}` +
+    ` | avgDuration=${formatAverageMs(summary.averageTotalDurationMs)}` +
+    ` avgTtft=${formatAverageMs(summary.averageTimeToFirstTextMs)}` +
+    ` errorRate=${formatRate(summary.errorRate)}` +
+    `${formatLatestFailureSummary(summary)}`
+  );
+}
+
 async function inspectRegisteredModels(): Promise<void> {
   const outputChannel = getOutputChannel();
-  const visibleModels = await vscode.lm.selectChatModels({ vendor: CLOUDLFARE_VENDOR });
+  const visibleModels = await vscode.lm.selectChatModels({ vendor: VENDOR });
   const registeredModels = providerRegistration?.getRegisteredModels() ?? [];
+  const recentRequestMetrics = getRecentCloudflareRequestMetrics();
+  const requestSummaries = summarizeCloudflareRequestMetrics(recentRequestMetrics);
   const agentEligibleCount = registeredModels.filter(
     (model) =>
       model.capabilities.toolCalling === true || typeof model.capabilities.toolCalling === "number",
@@ -186,6 +371,28 @@ async function inspectRegisteredModels(): Promise<void> {
     }
   }
 
+  outputChannel.appendLine("");
+  outputChannel.appendLine(`Recent request summary by model: ${requestSummaries.length}`);
+
+  if (requestSummaries.length === 0) {
+    outputChannel.appendLine("  (none recorded yet)");
+  } else {
+    for (const summary of requestSummaries) {
+      outputChannel.appendLine(`  - ${formatRequestMetricSummary(summary)}`);
+    }
+  }
+
+  outputChannel.appendLine("");
+  outputChannel.appendLine(`Recent Cloudflare requests: ${recentRequestMetrics.length}`);
+
+  if (recentRequestMetrics.length === 0) {
+    outputChannel.appendLine("  (none recorded yet)");
+  } else {
+    for (const metric of recentRequestMetrics) {
+      outputChannel.appendLine(`  - ${formatRecordedRequestMetric(metric)}`);
+    }
+  }
+
   outputChannel.show(true);
   void vscode.window.showInformationMessage(
     `Cloudflare: provider has ${registeredModels.length} model${registeredModels.length !== 1 ? "s" : ""}; VS Code exposes ${visibleModels.length}`,
@@ -198,7 +405,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Command: Refresh models
   context.subscriptions.push(
     vscode.commands.registerCommand("cloudflareCopilot.refreshModels", async () => {
-      await loadAndRegisterModels(context);
+      await loadAndRegisterModels(context, INTERACTIVE_LOAD_OPTIONS);
     }),
   );
 
@@ -221,7 +428,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const normalizedKey = normalizeApiKey(key);
         await context.secrets.store(SECRET_KEY, normalizedKey);
         vscode.window.showInformationMessage("✅ Cloudflare API Key stored securely.");
-        await loadAndRegisterModels(context);
+        await loadAndRegisterModels(context, INTERACTIVE_LOAD_OPTIONS);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (shouldReloadForConfigurationChange(event)) {
+        scheduleModelReload(context);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    context.secrets.onDidChange((event) => {
+      if (shouldReloadForSecretChange(event)) {
+        scheduleModelReload(context);
       }
     }),
   );
@@ -230,9 +453,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(new vscode.Disposable(() => disposeProviderRegistration()));
   context.subscriptions.push(new vscode.Disposable(() => disposeCompletionRegistration()));
   context.subscriptions.push(new vscode.Disposable(() => inspectOutputChannel?.dispose()));
+  context.subscriptions.push(new vscode.Disposable(() => disposePendingReload()));
 
   // Auto-load on activation
-  await loadAndRegisterModels(context);
+  await loadAndRegisterModels(context, INTERACTIVE_LOAD_OPTIONS);
 }
 
 export function deactivate(): void {

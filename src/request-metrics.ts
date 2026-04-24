@@ -1,0 +1,150 @@
+export interface RecordedCloudflareUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+export type RecordedCloudflareRequestOutcome = "success" | "error" | "cancelled";
+export type RecordedCloudflareDeliveryMode = "event-stream" | "buffered-json" | "unknown";
+
+export interface RecordedCloudflareRequestMetric {
+  recordedAt: number;
+  outcome: RecordedCloudflareRequestOutcome;
+  requestKind: string;
+  modelHandle: string;
+  endpointKind: "gateway" | "direct";
+  deliveryMode: RecordedCloudflareDeliveryMode;
+  requestedStream: boolean;
+  gatewayFallbackToDirect: boolean;
+  totalDurationMs: number;
+  timeToFirstTextMs?: number;
+  errorStatus?: number;
+  errorMessage?: string;
+  usage?: RecordedCloudflareUsage;
+}
+
+export interface AggregatedCloudflareRequestFailure {
+  recordedAt: number;
+  requestKind: string;
+  status?: number;
+  message?: string;
+}
+
+export interface AggregatedCloudflareRequestMetric {
+  modelHandle: string;
+  totalCount: number;
+  successCount: number;
+  errorCount: number;
+  cancelledCount: number;
+  averageTotalDurationMs: number;
+  averageTimeToFirstTextMs?: number;
+  timeToFirstTextCount: number;
+  errorRate: number;
+  latestRecordedAt: number;
+  latestFailure?: AggregatedCloudflareRequestFailure;
+}
+
+interface MutableAggregatedCloudflareRequestMetric extends AggregatedCloudflareRequestMetric {
+  totalDurationMsSum: number;
+  timeToFirstTextMsSum: number;
+}
+
+const MAX_RECORDED_REQUEST_METRICS = 25;
+
+const recordedRequestMetrics: RecordedCloudflareRequestMetric[] = [];
+
+export function recordCloudflareRequestMetric(metric: RecordedCloudflareRequestMetric): void {
+  recordedRequestMetrics.unshift({
+    ...metric,
+    usage: metric.usage ? { ...metric.usage } : undefined,
+  });
+
+  if (recordedRequestMetrics.length > MAX_RECORDED_REQUEST_METRICS) {
+    recordedRequestMetrics.length = MAX_RECORDED_REQUEST_METRICS;
+  }
+}
+
+export function getRecentCloudflareRequestMetrics(): readonly RecordedCloudflareRequestMetric[] {
+  return recordedRequestMetrics.map((metric) => ({
+    ...metric,
+    usage: metric.usage ? { ...metric.usage } : undefined,
+  }));
+}
+
+export function clearCloudflareRequestMetrics(): void {
+  recordedRequestMetrics.length = 0;
+}
+
+export function summarizeCloudflareRequestMetrics(
+  metrics: readonly RecordedCloudflareRequestMetric[] = recordedRequestMetrics,
+): readonly AggregatedCloudflareRequestMetric[] {
+  const summaries = new Map<string, MutableAggregatedCloudflareRequestMetric>();
+
+  for (const metric of metrics) {
+    const summary = summaries.get(metric.modelHandle) ?? {
+      modelHandle: metric.modelHandle,
+      totalCount: 0,
+      successCount: 0,
+      errorCount: 0,
+      cancelledCount: 0,
+      averageTotalDurationMs: 0,
+      timeToFirstTextCount: 0,
+      errorRate: 0,
+      latestRecordedAt: metric.recordedAt,
+      totalDurationMsSum: 0,
+      timeToFirstTextMsSum: 0,
+    };
+
+    summary.totalCount += 1;
+    summary.latestRecordedAt = Math.max(summary.latestRecordedAt, metric.recordedAt);
+    summary.totalDurationMsSum += metric.totalDurationMs;
+
+    if (typeof metric.timeToFirstTextMs === "number") {
+      summary.timeToFirstTextCount += 1;
+      summary.timeToFirstTextMsSum += metric.timeToFirstTextMs;
+    }
+
+    if (metric.outcome === "success") {
+      summary.successCount += 1;
+    } else if (metric.outcome === "error") {
+      summary.errorCount += 1;
+
+      if (!summary.latestFailure || metric.recordedAt >= summary.latestFailure.recordedAt) {
+        summary.latestFailure = {
+          recordedAt: metric.recordedAt,
+          requestKind: metric.requestKind,
+          status: metric.errorStatus,
+          message: metric.errorMessage,
+        };
+      }
+    } else {
+      summary.cancelledCount += 1;
+    }
+
+    summaries.set(metric.modelHandle, summary);
+  }
+
+  return [...summaries.values()]
+    .sort(
+      (left, right) =>
+        right.latestRecordedAt - left.latestRecordedAt ||
+        left.modelHandle.localeCompare(right.modelHandle),
+    )
+    .map((summary) => ({
+      modelHandle: summary.modelHandle,
+      totalCount: summary.totalCount,
+      successCount: summary.successCount,
+      errorCount: summary.errorCount,
+      cancelledCount: summary.cancelledCount,
+      averageTotalDurationMs:
+        summary.totalCount > 0 ? summary.totalDurationMsSum / summary.totalCount : 0,
+      averageTimeToFirstTextMs:
+        summary.timeToFirstTextCount > 0
+          ? summary.timeToFirstTextMsSum / summary.timeToFirstTextCount
+          : undefined,
+      timeToFirstTextCount: summary.timeToFirstTextCount,
+      errorRate: summary.totalCount > 0 ? summary.errorCount / summary.totalCount : 0,
+      latestRecordedAt: summary.latestRecordedAt,
+      latestFailure: summary.latestFailure ? { ...summary.latestFailure } : undefined,
+    }));
+}

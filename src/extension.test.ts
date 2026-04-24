@@ -1,5 +1,17 @@
 import * as assert from "assert";
-import { normalizeApiKey, getNoModelsFoundMessage } from "./extension";
+import * as vscode from "vscode";
+import {
+  formatRequestMetricSummary,
+  formatRecordedRequestMetric,
+  normalizeApiKey,
+  getNoModelsFoundMessage,
+  shouldReloadForConfigurationChange,
+  shouldReloadForSecretChange,
+} from "./extension";
+import type {
+  AggregatedCloudflareRequestMetric,
+  RecordedCloudflareRequestMetric,
+} from "./request-metrics";
 
 suite("extension", () => {
   // -------------------------------------------------------------------------
@@ -55,6 +67,174 @@ suite("extension", () => {
     test("suggests changing filter to 'all' for specific filter", () => {
       const msg = getNoModelsFoundMessage("Speech Recognition");
       assert.ok(msg.toLowerCase().includes("all"), `Expected 'all' suggestion in: ${msg}`);
+    });
+  });
+
+  suite("automatic reload triggers", () => {
+    test("reloads for cloudflareCopilot configuration changes", () => {
+      const event = {
+        affectsConfiguration: (section: string) => section === "cloudflareCopilot",
+      } as vscode.ConfigurationChangeEvent;
+
+      assert.strictEqual(shouldReloadForConfigurationChange(event), true);
+    });
+
+    test("ignores unrelated configuration changes", () => {
+      const event = {
+        affectsConfiguration: () => false,
+      } as vscode.ConfigurationChangeEvent;
+
+      assert.strictEqual(shouldReloadForConfigurationChange(event), false);
+    });
+
+    test("reloads when the Cloudflare secret changes", () => {
+      assert.strictEqual(shouldReloadForSecretChange({ key: "cloudflare-api-key" }), true);
+    });
+
+    test("ignores unrelated secret changes", () => {
+      assert.strictEqual(shouldReloadForSecretChange({ key: "other-key" }), false);
+    });
+  });
+
+  suite("formatRecordedRequestMetric", () => {
+    test("includes transport, durations, fallback, and usage when present", () => {
+      const metric: RecordedCloudflareRequestMetric = {
+        recordedAt: Date.UTC(2026, 3, 24, 12, 0, 0),
+        outcome: "success",
+        requestKind: "model",
+        modelHandle: "@cf/meta/llama",
+        endpointKind: "direct",
+        deliveryMode: "event-stream",
+        requestedStream: true,
+        gatewayFallbackToDirect: true,
+        totalDurationMs: 120,
+        timeToFirstTextMs: 35,
+        usage: {
+          promptTokens: 11,
+          completionTokens: 7,
+          totalTokens: 18,
+        },
+      };
+
+      const formatted = formatRecordedRequestMetric(metric);
+      assert.ok(formatted.includes("2026-04-24T12:00:00.000Z"), formatted);
+      assert.ok(formatted.includes("model @cf/meta/llama"), formatted);
+      assert.ok(formatted.includes("outcome=success"), formatted);
+      assert.ok(formatted.includes("transport=direct/event-stream"), formatted);
+      assert.ok(formatted.includes("requestedStream=true"), formatted);
+      assert.ok(formatted.includes("total=120ms"), formatted);
+      assert.ok(formatted.includes("ttft=35ms"), formatted);
+      assert.ok(formatted.includes("fallback=gateway->direct"), formatted);
+      assert.ok(formatted.includes("usage=total=18,prompt=11,completion=7"), formatted);
+    });
+
+    test("renders ttft as n/a when no first-text timing is available", () => {
+      const metric: RecordedCloudflareRequestMetric = {
+        recordedAt: 0,
+        outcome: "cancelled",
+        requestKind: "completion",
+        modelHandle: "@cf/completion",
+        endpointKind: "direct",
+        deliveryMode: "unknown",
+        requestedStream: false,
+        gatewayFallbackToDirect: false,
+        totalDurationMs: 42,
+      };
+
+      const formatted = formatRecordedRequestMetric(metric);
+      assert.ok(formatted.includes("ttft=n/a"), formatted);
+      assert.ok(formatted.includes("outcome=cancelled"), formatted);
+      assert.ok(!formatted.includes("fallback=gateway->direct"), formatted);
+      assert.ok(!formatted.includes("usage="), formatted);
+      assert.ok(!formatted.includes("error="), formatted);
+    });
+
+    test("includes status and error details for failed requests", () => {
+      const metric: RecordedCloudflareRequestMetric = {
+        recordedAt: 0,
+        outcome: "error",
+        requestKind: "completion",
+        modelHandle: "@cf/error",
+        endpointKind: "gateway",
+        deliveryMode: "unknown",
+        requestedStream: true,
+        gatewayFallbackToDirect: true,
+        totalDurationMs: 87,
+        errorStatus: 503,
+        errorMessage: "Cloudflare completion request failed via gateway (503): Service Unavailable",
+      };
+
+      const formatted = formatRecordedRequestMetric(metric);
+      assert.ok(formatted.includes("outcome=error"), formatted);
+      assert.ok(formatted.includes("status=503"), formatted);
+      assert.ok(
+        formatted.includes(
+          "error=Cloudflare completion request failed via gateway (503): Service Unavailable",
+        ),
+        formatted,
+      );
+    });
+  });
+
+  suite("formatRequestMetricSummary", () => {
+    test("includes counts and latest failure details when present", () => {
+      const summary: AggregatedCloudflareRequestMetric = {
+        modelHandle: "@cf/meta/llama",
+        totalCount: 4,
+        successCount: 2,
+        errorCount: 1,
+        cancelledCount: 1,
+        averageTotalDurationMs: 42.5,
+        averageTimeToFirstTextMs: 18.2,
+        timeToFirstTextCount: 2,
+        errorRate: 0.25,
+        latestRecordedAt: Date.UTC(2026, 3, 24, 12, 5, 0),
+        latestFailure: {
+          recordedAt: Date.UTC(2026, 3, 24, 12, 0, 0),
+          requestKind: "completion",
+          status: 503,
+          message: "Cloudflare completion request failed via gateway (503): Service Unavailable",
+        },
+      };
+
+      const formatted = formatRequestMetricSummary(summary);
+      assert.ok(formatted.includes("@cf/meta/llama"), formatted);
+      assert.ok(formatted.includes("total=4 success=2 error=1 cancelled=1"), formatted);
+      assert.ok(formatted.includes("avgDuration=43ms"), formatted);
+      assert.ok(formatted.includes("avgTtft=18ms"), formatted);
+      assert.ok(formatted.includes("errorRate=25%"), formatted);
+      assert.ok(formatted.includes("latestFailure=2026-04-24T12:00:00.000Z"), formatted);
+      assert.ok(formatted.includes("request=completion"), formatted);
+      assert.ok(formatted.includes("status=503"), formatted);
+      assert.ok(
+        formatted.includes(
+          "error=Cloudflare completion request failed via gateway (503): Service Unavailable",
+        ),
+        formatted,
+      );
+    });
+
+    test("shows latestFailure=none when a model has no recent errors", () => {
+      const summary: AggregatedCloudflareRequestMetric = {
+        modelHandle: "@cf/success-only",
+        totalCount: 3,
+        successCount: 3,
+        errorCount: 0,
+        cancelledCount: 0,
+        averageTotalDurationMs: 20,
+        averageTimeToFirstTextMs: undefined,
+        timeToFirstTextCount: 0,
+        errorRate: 0,
+        latestRecordedAt: 5,
+      };
+
+      const formatted = formatRequestMetricSummary(summary);
+      assert.ok(formatted.includes("avgDuration=20ms"), formatted);
+      assert.ok(formatted.includes("avgTtft=n/a"), formatted);
+      assert.ok(formatted.includes("errorRate=0%"), formatted);
+      assert.ok(formatted.includes("latestFailure=none"), formatted);
+      assert.ok(!formatted.includes("status="), formatted);
+      assert.ok(!formatted.includes("request="), formatted);
     });
   });
 });

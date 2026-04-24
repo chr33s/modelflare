@@ -1,8 +1,17 @@
 import * as vscode from "vscode";
-import { CloudflareModel, getCloudflareModelHandle } from "./cloudflare-client";
+import {
+  CloudflareModel,
+  getCloudflareModelFamily,
+  getCloudflareModelHandle,
+  getCloudflareModelPickerCategory,
+  getCloudflareModelVersion,
+  sortCloudflareModels,
+} from "./cloudflare-client";
 import {
   CloudflareChatMessage,
+  CloudflareMessageContentPart,
   CloudflareRequestState,
+  CloudflareResponsePart,
   CloudflareToolChoiceMode,
   CloudflareToolDefinition,
   requestCloudflareChatResponse,
@@ -22,7 +31,9 @@ interface CloudflareLanguageModelChatInformation extends vscode.LanguageModelCha
 
 interface ProviderModelInformation extends CloudflareLanguageModelChatInformation {}
 
-export interface RegisteredModelProvider extends vscode.Disposable {
+export interface RegisteredModelProvider
+  extends vscode.Disposable, vscode.LanguageModelChatProvider<ProviderModelInformation> {
+  clearModels(): void;
   updateModels(
     models: CloudflareModel[],
     accountId: string,
@@ -37,14 +48,424 @@ const IMAGE_INPUT_HINTS = ["vision", "multimodal", "image input", "image underst
 const TOOL_CALLING_PROPERTY_HINTS = ["function", "tool"];
 const IMAGE_INPUT_PROPERTY_HINTS = ["vision", "image", "multimodal"];
 const NEGATIVE_PROPERTY_VALUES = ["false", "0", "no", "disabled", "unsupported"];
+const FALLBACK_MAX_INPUT_TOKENS = 8192;
+const FALLBACK_MAX_OUTPUT_TOKENS = 4096;
+const BASE_PROMPT_TOKEN_OVERHEAD = 16;
+const BASE_COMPLETION_TOKEN_OVERHEAD = 4;
+const TOOL_MODE_PROMPT_OVERHEAD = 8;
+const BASE_MESSAGE_TOKEN_OVERHEAD = 4;
+const BASE_TOOL_CALL_TOKEN_OVERHEAD = 12;
+const BASE_TOOL_RESULT_TOKEN_OVERHEAD = 8;
+const BASE_TOOL_DEFINITION_TOKEN_OVERHEAD = 16;
+const BASE_TOOL_SCHEMA_TOKEN_OVERHEAD = 8;
+const TOOL_SCHEMA_TOKEN_MULTIPLIER = 1.1;
+const MIN_IMAGE_TOKEN_COST = 64;
+const TOKENS_PER_IMAGE_KIB = 64;
+const INPUT_TOKEN_PROPERTY_HINTS = [
+  "context window",
+  "context_window",
+  "context length",
+  "context_length",
+  "max_input_tokens",
+  "max input tokens",
+  "input token limit",
+  "context tokens",
+  "max_sequence_length",
+  "max sequence length",
+];
+const OUTPUT_TOKEN_PROPERTY_HINTS = [
+  "max_output_tokens",
+  "max output tokens",
+  "output token limit",
+  "max_completion_tokens",
+  "max completion tokens",
+  "max_new_tokens",
+  "completion token limit",
+];
 
-function getMessageText(message: vscode.LanguageModelChatRequestMessage): string {
-  return message.content
-    .filter(
-      (part): part is vscode.LanguageModelTextPart => part instanceof vscode.LanguageModelTextPart,
-    )
-    .map((part: vscode.LanguageModelTextPart) => part.value)
-    .join("");
+interface ProviderModelInformation extends CloudflareLanguageModelChatInformation {
+  readonly rawMaxInputTokens: number;
+  readonly reservedPromptTokens: number;
+}
+
+interface ResolvedModelTokenLimits {
+  readonly rawMaxInputTokens: number;
+  readonly maxOutputTokens: number;
+  readonly reservedPromptTokens: number;
+}
+
+function decodeText(data: Uint8Array): string {
+  return new TextDecoder().decode(data);
+}
+
+function toDataPartLike(value: unknown): { data: Uint8Array; mimeType: string } | undefined {
+  if (value instanceof vscode.LanguageModelDataPart) {
+    return { data: value.data, mimeType: value.mimeType };
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const mimeType = typeof record.mimeType === "string" ? record.mimeType : undefined;
+  const rawData = record.data;
+
+  if (!mimeType || rawData === undefined) {
+    return undefined;
+  }
+
+  if (rawData instanceof Uint8Array) {
+    return { data: rawData, mimeType };
+  }
+
+  if (Array.isArray(rawData) && rawData.every((item) => typeof item === "number")) {
+    return { data: Uint8Array.from(rawData), mimeType };
+  }
+
+  if (rawData && typeof rawData === "object") {
+    const numericEntries = Object.entries(rawData)
+      .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+      .sort((left, right) => Number(left[0]) - Number(right[0]));
+
+    if (numericEntries.length > 0) {
+      return {
+        data: Uint8Array.from(numericEntries.map((entry) => entry[1])),
+        mimeType,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function stringifyDataPartLike(value: unknown): string | undefined {
+  const dataPart = toDataPartLike(value);
+  if (!dataPart) {
+    return undefined;
+  }
+
+  if (dataPart.mimeType.startsWith("text/") || dataPart.mimeType.includes("json")) {
+    return decodeText(dataPart.data);
+  }
+
+  if (dataPart.mimeType.startsWith("image/")) {
+    return `[${dataPart.mimeType} ${dataPart.data.byteLength} bytes]`;
+  }
+
+  return `[${dataPart.mimeType || "application/octet-stream"} ${dataPart.data.byteLength} bytes]`;
+}
+
+function dataPartToBase64(part: vscode.LanguageModelDataPart): string {
+  return Buffer.from(part.data).toString("base64");
+}
+
+function serializeValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseTokenNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase().replace(/,/g, " ");
+    const matches = Array.from(normalized.matchAll(/(\d+(?:\.\d+)?)\s*([km]?)/g));
+    const parsed = matches
+      .map((match) => {
+        const numericValue = Number(match[1]);
+        if (!Number.isFinite(numericValue) || numericValue <= 0) {
+          return undefined;
+        }
+
+        const suffix = match[2];
+        const multiplier = suffix === "m" ? 1_000_000 : suffix === "k" ? 1_000 : 1;
+        return Math.floor(numericValue * multiplier);
+      })
+      .filter((candidate): candidate is number => candidate !== undefined);
+
+    return parsed.length > 0 ? Math.max(...parsed) : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const parsed = value
+      .map((item) => parseTokenNumber(item))
+      .filter((candidate): candidate is number => candidate !== undefined);
+    return parsed.length > 0 ? Math.max(...parsed) : undefined;
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const parsed = [record.maximum, record.max, record.limit, record.default, record.value]
+      .map((item) => parseTokenNumber(item))
+      .filter((candidate): candidate is number => candidate !== undefined);
+    return parsed.length > 0 ? Math.max(...parsed) : undefined;
+  }
+
+  return undefined;
+}
+
+function findTokenLimitFromProperties(
+  model: CloudflareModel,
+  propertyHints: readonly string[],
+): number | undefined {
+  if (!model.properties || model.properties.length === 0) {
+    return undefined;
+  }
+
+  const hints = propertyHints.map((hint) => hint.toLowerCase());
+  const candidates = model.properties
+    .filter((property) => {
+      const propertyId = normalizeText(property.property_id);
+      const propertyValue = normalizeText(property.value);
+      return hints.some((hint) => propertyId.includes(hint) || propertyValue.includes(hint));
+    })
+    .map((property) => parseTokenNumber(property.value))
+    .filter((candidate): candidate is number => candidate !== undefined);
+
+  return candidates.length > 0 ? Math.max(...candidates) : undefined;
+}
+
+function findTokenLimitFromDescription(
+  model: CloudflareModel,
+  tokenKind: "input" | "output",
+): number | undefined {
+  const description = [model.name, model.description, model.task?.description]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (description.length === 0) {
+    return undefined;
+  }
+
+  const regex =
+    tokenKind === "input"
+      ? /(\d+(?:\.\d+)?)\s*([km]?)\s*(?:token|tokens)?\s*(?:context|window|input)/g
+      : /(\d+(?:\.\d+)?)\s*([km]?)\s*(?:token|tokens)?\s*(?:output|completion)/g;
+  const matches = Array.from(description.matchAll(regex));
+  const parsed = matches
+    .map((match) => parseTokenNumber(`${match[1]}${match[2]}`))
+    .filter((candidate): candidate is number => candidate !== undefined);
+
+  return parsed.length > 0 ? Math.max(...parsed) : undefined;
+}
+
+function resolveModelTokenLimits(
+  model: CloudflareModel,
+  capabilities: vscode.LanguageModelChatCapabilities,
+): ResolvedModelTokenLimits {
+  const rawMaxInputTokens =
+    findTokenLimitFromProperties(model, INPUT_TOKEN_PROPERTY_HINTS) ??
+    findTokenLimitFromDescription(model, "input") ??
+    FALLBACK_MAX_INPUT_TOKENS;
+  const maxOutputTokens =
+    findTokenLimitFromProperties(model, OUTPUT_TOKEN_PROPERTY_HINTS) ??
+    findTokenLimitFromDescription(model, "output") ??
+    Math.min(FALLBACK_MAX_OUTPUT_TOKENS, rawMaxInputTokens);
+  const reservedPromptTokens =
+    BASE_PROMPT_TOKEN_OVERHEAD +
+    BASE_COMPLETION_TOKEN_OVERHEAD +
+    (capabilities.toolCalling ? TOOL_MODE_PROMPT_OVERHEAD : 0);
+
+  return {
+    rawMaxInputTokens,
+    maxOutputTokens,
+    reservedPromptTokens,
+  };
+}
+
+function estimateTextTokens(value: string): number {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return 0;
+  }
+
+  const byteCount = Buffer.byteLength(normalized, "utf8");
+  const wordCount = normalized.split(/\s+/u).length;
+  const punctuationCount = (normalized.match(/[^\w\s]/g) ?? []).length;
+  return Math.max(1, Math.ceil(byteCount / 4), wordCount + Math.ceil(punctuationCount / 4));
+}
+
+function estimateObjectTokens(value: unknown): number {
+  return estimateTextTokens(serializeValue(value));
+}
+
+function stringifyDataPart(part: vscode.LanguageModelDataPart): string {
+  if (part.mimeType.startsWith("text/") || part.mimeType.includes("json")) {
+    return decodeText(part.data);
+  }
+
+  if (part.mimeType.startsWith("image/")) {
+    return `[${part.mimeType} ${part.data.byteLength} bytes]`;
+  }
+
+  return `[${part.mimeType || "application/octet-stream"} ${part.data.byteLength} bytes]`;
+}
+
+function estimateToolDefinitionTokens(tool: vscode.LanguageModelChatTool): number {
+  const schemaTokens = tool.inputSchema
+    ? Math.ceil(estimateObjectTokens(tool.inputSchema) * TOOL_SCHEMA_TOKEN_MULTIPLIER)
+    : 0;
+
+  return (
+    BASE_TOOL_DEFINITION_TOKEN_OVERHEAD +
+    estimateTextTokens(tool.name) +
+    estimateTextTokens(tool.description) +
+    BASE_TOOL_SCHEMA_TOKEN_OVERHEAD +
+    schemaTokens
+  );
+}
+
+function estimateInputPartTokens(part: unknown): number {
+  if (part instanceof vscode.LanguageModelTextPart) {
+    return estimateTextTokens(part.value);
+  }
+
+  const dataPart = toDataPartLike(part);
+  if (dataPart) {
+    if (dataPart.mimeType.startsWith("image/")) {
+      return Math.max(
+        MIN_IMAGE_TOKEN_COST,
+        Math.ceil(dataPart.data.byteLength / 1024) * TOKENS_PER_IMAGE_KIB,
+      );
+    }
+
+    return estimateTextTokens(stringifyDataPartLike(part) ?? "");
+  }
+
+  if (part instanceof vscode.LanguageModelToolCallPart) {
+    return (
+      BASE_TOOL_CALL_TOKEN_OVERHEAD +
+      estimateTextTokens(part.name) +
+      estimateObjectTokens(part.input)
+    );
+  }
+
+  if (part instanceof vscode.LanguageModelToolResultPart) {
+    return (
+      BASE_TOOL_RESULT_TOKEN_OVERHEAD +
+      part.content.reduce<number>((total, item) => total + estimateInputPartTokens(item), 0)
+    );
+  }
+
+  if (typeof part === "string") {
+    return estimateTextTokens(part);
+  }
+
+  return estimateObjectTokens(part);
+}
+
+function estimateMessageTokens(message: vscode.LanguageModelChatRequestMessage): number {
+  return (
+    BASE_MESSAGE_TOKEN_OVERHEAD +
+    (message.name ? estimateTextTokens(message.name) + 1 : 0) +
+    message.content.reduce<number>((total, part) => total + estimateInputPartTokens(part), 0)
+  );
+}
+
+function estimateRequestTokens(
+  model: ProviderModelInformation,
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  tools: readonly vscode.LanguageModelChatTool[] | undefined,
+): number {
+  const messageTokens = messages.reduce(
+    (total, message) => total + estimateMessageTokens(message),
+    0,
+  );
+  const toolTokens = (tools ?? []).reduce(
+    (total, tool) => total + estimateToolDefinitionTokens(tool),
+    0,
+  );
+
+  return model.reservedPromptTokens + messageTokens + toolTokens;
+}
+
+function collapseContentParts(
+  contentParts: readonly CloudflareMessageContentPart[],
+): CloudflareChatMessage["content"] {
+  if (contentParts.length === 0) {
+    return "";
+  }
+
+  const mergedParts: CloudflareMessageContentPart[] = [];
+  let pendingText = "";
+
+  for (const part of contentParts) {
+    if (part.type === "text") {
+      pendingText += part.text;
+      continue;
+    }
+
+    if (pendingText.length > 0) {
+      mergedParts.push({ type: "text", text: pendingText });
+      pendingText = "";
+    }
+
+    mergedParts.push(part);
+  }
+
+  if (pendingText.length > 0) {
+    mergedParts.push({ type: "text", text: pendingText });
+  }
+
+  if (mergedParts.every((part) => part.type === "text")) {
+    return mergedParts.map((part) => part.text).join("");
+  }
+
+  return mergedParts;
+}
+
+function toCloudflareContentParts(
+  part: vscode.LanguageModelDataPart,
+): CloudflareMessageContentPart[] {
+  if (part.mimeType.startsWith("image/")) {
+    return [
+      {
+        type: "image_url",
+        image_url: {
+          url: `data:${part.mimeType};base64,${dataPartToBase64(part)}`,
+        },
+      },
+    ];
+  }
+
+  const value = stringifyDataPart(part);
+  return value.length > 0 ? [{ type: "text", text: value }] : [];
+}
+
+function reportResponsePart(
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  part: CloudflareResponsePart,
+): void {
+  if (part.type === "text") {
+    if (part.value.length > 0) {
+      progress.report(new vscode.LanguageModelTextPart(part.value));
+    }
+    return;
+  }
+
+  if (part.type === "data") {
+    progress.report(new vscode.LanguageModelDataPart(part.data, part.mimeType));
+    return;
+  }
+
+  progress.report(
+    new vscode.LanguageModelToolCallPart(
+      part.toolCall.callId,
+      part.toolCall.name,
+      part.toolCall.input,
+    ),
+  );
 }
 
 function mapRole(role: vscode.LanguageModelChatMessageRole): CloudflareChatMessage["role"] {
@@ -60,6 +481,11 @@ function mapRole(role: vscode.LanguageModelChatMessageRole): CloudflareChatMessa
 }
 
 function stringifyUnknownPart(value: unknown): string {
+  const dataPartText = stringifyDataPartLike(value);
+  if (dataPartText !== undefined) {
+    return dataPartText;
+  }
+
   if (typeof value === "string") {
     return value;
   }
@@ -121,13 +547,13 @@ export function toCloudflareMessages(
 
   for (const message of messages) {
     const role = mapRole(message.role);
-    const textParts: string[] = [];
+    const contentParts: CloudflareMessageContentPart[] = [];
     const toolCallParts: vscode.LanguageModelToolCallPart[] = [];
     const toolResultParts: vscode.LanguageModelToolResultPart[] = [];
 
     for (const part of message.content) {
       if (part instanceof vscode.LanguageModelTextPart) {
-        textParts.push(part.value);
+        contentParts.push({ type: "text", text: part.value });
         continue;
       }
 
@@ -141,12 +567,18 @@ export function toCloudflareMessages(
         continue;
       }
 
+      if (part instanceof vscode.LanguageModelDataPart) {
+        contentParts.push(...toCloudflareContentParts(part));
+        continue;
+      }
+
       if (typeof part === "string") {
-        textParts.push(part);
+        contentParts.push({ type: "text", text: part });
       }
     }
 
-    const content = textParts.join("");
+    const content = collapseContentParts(contentParts);
+    const hasContent = typeof content === "string" ? content.length > 0 : content.length > 0;
 
     if (role === "assistant" && toolCallParts.length > 0) {
       cloudflareMessages.push({
@@ -154,7 +586,7 @@ export function toCloudflareMessages(
         content,
         tool_calls: toolCallParts.map((part) => toCloudflareToolCallPayload(part)),
       });
-    } else if (content.length > 0) {
+    } else if (hasContent) {
       cloudflareMessages.push({
         role,
         content,
@@ -352,22 +784,26 @@ export function getModelDetail(
 function toProviderModelInformation(model: CloudflareModel): ProviderModelInformation {
   const modelHandle = getCloudflareModelHandle(model);
   const capabilities = inferCapabilities(model);
+  const tokenLimits = resolveModelTokenLimits(model, capabilities);
+  const category = getCloudflareModelPickerCategory(model);
 
   return {
     id: modelHandle,
     name: getModelDisplayName(model, modelHandle),
-    family: modelHandle,
-    version: "1.0",
-    maxInputTokens: 8192,
-    maxOutputTokens: 4096,
+    family: getCloudflareModelFamily(model),
+    version: getCloudflareModelVersion(model),
+    maxInputTokens: Math.max(256, tokenLimits.rawMaxInputTokens - tokenLimits.reservedPromptTokens),
+    maxOutputTokens: tokenLimits.maxOutputTokens,
     capabilities,
     isUserSelectable: true,
     category: {
-      label: "Cloudflare",
-      order: 10,
+      label: category.label,
+      order: category.order,
     },
     tooltip: model.description,
     detail: getModelDetail(model, capabilities),
+    rawMaxInputTokens: tokenLimits.rawMaxInputTokens,
+    reservedPromptTokens: tokenLimits.reservedPromptTokens,
   };
 }
 
@@ -388,11 +824,19 @@ class CloudflareModelProvider
     apiKey: string,
     gatewayId?: string,
   ): void {
-    this.modelInfos = models.map(toProviderModelInformation);
+    const sortedModels = sortCloudflareModels(models);
+    this.modelInfos = sortedModels.map(toProviderModelInformation);
     this.modelsById = new Map(
-      models.map((model) => [getCloudflareModelHandle(model), model] as const),
+      sortedModels.map((model) => [getCloudflareModelHandle(model), model] as const),
     );
     this.state = { accountId, apiKey, gatewayId };
+    this.onDidChangeEmitter.fire();
+  }
+
+  clearModels(): void {
+    this.modelInfos = [];
+    this.modelsById.clear();
+    this.state = undefined;
     this.onDidChangeEmitter.fire();
   }
 
@@ -412,8 +856,11 @@ class CloudflareModelProvider
     text: string | vscode.LanguageModelChatRequestMessage,
     _token: vscode.CancellationToken,
   ): Promise<number> {
-    const sourceText = typeof text === "string" ? text : getMessageText(text);
-    return Math.ceil(sourceText.length / 4);
+    if (typeof text === "string") {
+      return estimateTextTokens(text);
+    }
+
+    return estimateMessageTokens(text);
   }
 
   async provideLanguageModelChatResponse(
@@ -436,6 +883,14 @@ class CloudflareModelProvider
       throw new Error(`Cloudflare model is not registered: ${model.id}`);
     }
 
+    const estimatedRequestTokens = estimateRequestTokens(model, messages, options.tools);
+    if (estimatedRequestTokens > model.rawMaxInputTokens) {
+      throw new Error(
+        `Cloudflare request exceeds the estimated context window for ${model.name}: ` +
+          `${estimatedRequestTokens} tokens requested, ${model.rawMaxInputTokens} available.`,
+      );
+    }
+
     const response = await requestCloudflareChatResponse({
       modelHandle: getCloudflareModelHandle(cloudflareModel),
       state: this.state,
@@ -444,6 +899,12 @@ class CloudflareModelProvider
       toolChoice: toCloudflareToolChoice(options.toolMode, options.tools),
       token,
       errorLabel: "model",
+      stream: true,
+      onTextChunk: (text) => {
+        if (text.length > 0) {
+          progress.report(new vscode.LanguageModelTextPart(text));
+        }
+      },
     });
 
     if (token.isCancellationRequested) {
@@ -454,14 +915,12 @@ class CloudflareModelProvider
       return;
     }
 
-    if (response.text) {
-      progress.report(new vscode.LanguageModelTextPart(response.text));
-    }
+    for (const part of response.parts) {
+      if (part.type === "text") {
+        continue;
+      }
 
-    for (const toolCall of response.toolCalls ?? []) {
-      progress.report(
-        new vscode.LanguageModelToolCallPart(toolCall.callId, toolCall.name, toolCall.input),
-      );
+      reportResponsePart(progress, part);
     }
   }
 

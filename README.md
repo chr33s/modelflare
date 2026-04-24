@@ -19,16 +19,18 @@ Automatically fetches and surfaces all **Cloudflare Workers AI** models in the V
 3. Open VS Code Settings (`cloudflareCopilot`) and set:
    - `cloudflareCopilot.accountId` — your Cloudflare Account ID
    - `cloudflareCopilot.gatewayId` — _(optional)_ your AI Gateway ID
+   - `cloudflareCopilot.completionModel` — _(optional)_ model handle, name, or id to pin for inline completions
 4. Models will appear automatically in the **Copilot Chat model picker** and are also used for inline code completions
 
 ## Settings
 
-| Setting                         | Description                     | Default           |
-| ------------------------------- | ------------------------------- | ----------------- |
-| `cloudflareCopilot.accountId`   | Cloudflare Account ID           | —                 |
-| `cloudflareCopilot.apiKey`      | API Key (prefer secret storage) | —                 |
-| `cloudflareCopilot.gatewayId`   | AI Gateway ID (optional)        | —                 |
-| `cloudflareCopilot.modelFilter` | `Text Generation` or `all`      | `Text Generation` |
+| Setting                             | Description                               | Default           |
+| ----------------------------------- | ----------------------------------------- | ----------------- |
+| `cloudflareCopilot.accountId`       | Cloudflare Account ID                     | —                 |
+| `cloudflareCopilot.apiKey`          | API Key (prefer secret storage)           | —                 |
+| `cloudflareCopilot.gatewayId`       | AI Gateway ID (optional)                  | —                 |
+| `cloudflareCopilot.modelFilter`     | `Text Generation` or `all`                | `Text Generation` |
+| `cloudflareCopilot.completionModel` | Optional inline completion model override | `""`              |
 
 ## Architecture
 
@@ -45,17 +47,15 @@ Cloudflare Workers AI  (model inference)
 ## Commands
 
 - `Cloudflare: Refresh Models` — re-fetch and re-register all models
-- `Cloudflare: Inspect Registered Chat Models` — compare fetched Cloudflare models with what VS Code exposes via `selectChatModels`
-- `Cloudflare: Store API Key Securely` — store your API key in VS Code secret storage
+- `Cloudflare: Inspect Models` — compare fetched Cloudflare models with what VS Code exposes via `selectChatModels`
+- `Cloudflare: Store Credentials` — store your API key in VS Code secret storage
 
 ## Development
 
 ```sh
 npm run install
-npm run package
-
-code --install-extension ./cloudflare-copilot-models-0.0.1.vsix
+npm run build
 
 vscode:<CTRL+P> > Developer: Reload Window
-                > Cloudflare: Inspect Registered Chat Models
+                > Cloudflare: Inspect Models
 ```

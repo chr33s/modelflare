@@ -5,6 +5,10 @@ import {
   requestCloudflareChatResponse,
   requestCloudflareChatText,
 } from "./cloudflare-runtime";
+import {
+  clearCloudflareRequestMetrics,
+  getRecentCloudflareRequestMetrics,
+} from "./request-metrics";
 import type {
   CloudflareRequestState,
   CloudflareChatMessage,
@@ -34,6 +38,14 @@ function makeJsonResponse(body: unknown, status = 200): Response {
 
 function makeTextResponse(body: string, status = 200): Response {
   return new Response(body, { status });
+}
+
+function makeSseResponse(events: string[], status = 200): Response {
+  const body = [...events.map((event) => `data: ${event}\n\n`), "data: [DONE]\n\n"].join("");
+  return new Response(body, {
+    status,
+    headers: { "Content-Type": "text/event-stream" },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -96,10 +108,12 @@ const MESSAGES: readonly CloudflareChatMessage[] = [{ role: "user", content: "He
 suite("cloudflare-runtime", () => {
   setup(() => {
     savedFetch = g.fetch as typeof fetch;
+    clearCloudflareRequestMetrics();
   });
 
   teardown(() => {
     g.fetch = savedFetch;
+    clearCloudflareRequestMetrics();
   });
 
   // -------------------------------------------------------------------------
@@ -145,6 +159,12 @@ suite("cloudflare-runtime", () => {
         errorLabel: "test",
       });
       assert.strictEqual(result, undefined);
+
+      const recorded = getRecentCloudflareRequestMetrics();
+      assert.strictEqual(recorded.length, 1);
+      assert.strictEqual(recorded[0].outcome, "cancelled");
+      assert.strictEqual(recorded[0].endpointKind, "direct");
+      assert.strictEqual(recorded[0].deliveryMode, "unknown");
     });
 
     test("makes POST request to direct endpoint", async () => {
@@ -370,6 +390,14 @@ suite("cloudflare-runtime", () => {
           }),
         /403/,
       );
+
+      const recorded = getRecentCloudflareRequestMetrics();
+      assert.strictEqual(recorded.length, 1);
+      assert.strictEqual(recorded[0].outcome, "error");
+      assert.strictEqual(recorded[0].endpointKind, "direct");
+      assert.strictEqual(recorded[0].deliveryMode, "unknown");
+      assert.strictEqual(recorded[0].errorStatus, 403);
+      assert.ok(recorded[0].errorMessage?.includes("Forbidden"));
     });
 
     test("throws on invalid JSON response", async () => {
@@ -386,6 +414,33 @@ suite("cloudflare-runtime", () => {
           }),
         /parse/i,
       );
+    });
+
+    test("aggregates text from structured content arrays", async () => {
+      mockFetch(async () =>
+        makeJsonResponse({
+          choices: [
+            {
+              message: {
+                content: [
+                  { type: "text", text: "Hello" },
+                  { type: "text", text: " world" },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+
+      const result = await requestCloudflareChatText({
+        modelHandle: "@cf/model",
+        state: DIRECT_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+      });
+
+      assert.strictEqual(result, "Hello world");
     });
   });
 
@@ -471,6 +526,39 @@ suite("cloudflare-runtime", () => {
       assert.strictEqual(callCount, 2);
       assert.ok(lastUrl?.includes("api.cloudflare.com"), `Last URL: ${lastUrl}`);
       assert.strictEqual(result, "direct fallback");
+    });
+
+    test("marks metrics when gateway falls back to direct", async () => {
+      let callCount = 0;
+      mockFetch(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return makeTextResponse("Unauthorized", 401);
+        }
+
+        return makeJsonResponse({ result: { response: "direct fallback" } });
+      });
+
+      const response = await requestCloudflareChatResponse({
+        modelHandle: "@cf/model",
+        state: GATEWAY_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+      });
+
+      assert.strictEqual(response?.text, "direct fallback");
+      assert.strictEqual(response?.metrics?.endpointKind, "direct");
+      assert.strictEqual(response?.metrics?.deliveryMode, "buffered-json");
+      assert.strictEqual(response?.metrics?.requestedStream, false);
+      assert.strictEqual(response?.metrics?.gatewayFallbackToDirect, true);
+
+      const recorded = getRecentCloudflareRequestMetrics();
+      assert.strictEqual(recorded.length, 1);
+      assert.strictEqual(recorded[0].outcome, "success");
+      assert.strictEqual(recorded[0].requestKind, "test");
+      assert.strictEqual(recorded[0].modelHandle, "@cf/model");
+      assert.strictEqual(recorded[0].gatewayFallbackToDirect, true);
     });
 
     test("throws without fallback when gateway returns non-401 error", async () => {
@@ -628,6 +716,200 @@ suite("cloudflare-runtime", () => {
 
       assert.deepStrictEqual(resp!.toolCalls![0].input, { value: "not-json" });
     });
+
+    test("preserves reasoning content as a data part", async () => {
+      const resp = await getResponse({
+        choices: [
+          {
+            message: {
+              content: [{ type: "reasoning", text: "hidden chain of thought" }],
+            },
+          },
+        ],
+      });
+
+      assert.ok(resp);
+      assert.strictEqual(resp?.parts.length, 1);
+      assert.strictEqual(resp?.parts[0].type, "data");
+      if (resp?.parts[0].type !== "data") {
+        assert.fail("Expected a data part");
+      }
+
+      assert.strictEqual(resp.parts[0].mimeType, "text/x-cloudflare-reasoning");
+      assert.strictEqual(new TextDecoder().decode(resp.parts[0].data), "hidden chain of thought");
+    });
+
+    test("extracts usage metadata when present", async () => {
+      const resp = await getResponse({
+        result: {
+          response: "ok",
+          usage: {
+            prompt_tokens: 11,
+            completion_tokens: 7,
+            total_tokens: 18,
+          },
+        },
+      });
+
+      assert.deepStrictEqual(resp?.usage, {
+        promptTokens: 11,
+        completionTokens: 7,
+        totalTokens: 18,
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // requestCloudflareChatResponse — streaming
+  // -------------------------------------------------------------------------
+
+  suite("requestCloudflareChatResponse — streaming", () => {
+    test("streams text chunks from SSE responses and accumulates the final text", async () => {
+      const chunks: string[] = [];
+      let capturedBody: Record<string, unknown> | undefined;
+
+      mockFetch(async (_url, init) => {
+        capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+        return makeSseResponse([
+          JSON.stringify({ response: "Hel" }),
+          JSON.stringify({ response: "Hello" }),
+          JSON.stringify({ choices: [{ delta: { content: " world" } }] }),
+          JSON.stringify({ usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } }),
+        ]);
+      });
+
+      const response = await requestCloudflareChatResponse({
+        modelHandle: "@cf/model",
+        state: DIRECT_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+        stream: true,
+        onTextChunk: (text) => chunks.push(text),
+      });
+
+      assert.strictEqual(capturedBody?.stream, true);
+      assert.deepStrictEqual(chunks, ["Hel", "lo", " world"]);
+      assert.strictEqual(response?.text, "Hello world");
+      assert.deepStrictEqual(
+        response?.parts
+          .filter((part) => part.type === "text")
+          .map((part) => (part.type === "text" ? part.value : "")),
+        ["Hel", "lo", " world"],
+      );
+      assert.deepStrictEqual(response?.usage, {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      });
+      assert.strictEqual(response?.metrics?.endpointKind, "direct");
+      assert.strictEqual(response?.metrics?.deliveryMode, "event-stream");
+      assert.strictEqual(response?.metrics?.requestedStream, true);
+      assert.strictEqual(response?.metrics?.gatewayFallbackToDirect, false);
+      assert.ok((response?.metrics?.timeToFirstTextMs ?? -1) >= 0);
+      assert.ok((response?.metrics?.totalDurationMs ?? -1) >= 0);
+      assert.ok(
+        (response?.metrics?.totalDurationMs ?? -1) >= (response?.metrics?.timeToFirstTextMs ?? -1),
+      );
+
+      const recorded = getRecentCloudflareRequestMetrics();
+      assert.strictEqual(recorded.length, 1);
+      assert.strictEqual(recorded[0].outcome, "success");
+      assert.strictEqual(recorded[0].deliveryMode, "event-stream");
+      assert.strictEqual(recorded[0].requestedStream, true);
+      assert.strictEqual(recorded[0].usage?.totalTokens, 3);
+    });
+
+    test("emits a text chunk callback for non-streaming JSON responses when requested", async () => {
+      const chunks: string[] = [];
+      let capturedBody: Record<string, unknown> | undefined;
+
+      mockFetch(async (_url, init) => {
+        capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+        return makeJsonResponse({ result: { response: "fallback json" } });
+      });
+
+      const response = await requestCloudflareChatResponse({
+        modelHandle: "@cf/model",
+        state: DIRECT_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+        stream: true,
+        onTextChunk: (text) => chunks.push(text),
+      });
+
+      assert.strictEqual(capturedBody?.stream, true);
+      assert.deepStrictEqual(chunks, ["fallback json"]);
+      assert.strictEqual(response?.text, "fallback json");
+      assert.strictEqual(response?.metrics?.endpointKind, "direct");
+      assert.strictEqual(response?.metrics?.deliveryMode, "buffered-json");
+      assert.strictEqual(response?.metrics?.requestedStream, true);
+      assert.strictEqual(response?.metrics?.gatewayFallbackToDirect, false);
+      assert.strictEqual(response?.metrics?.timeToFirstTextMs, response?.metrics?.totalDurationMs);
+    });
+
+    test("accumulates fragmented streamed tool calls and emits one resolved tool call", async () => {
+      mockFetch(async () =>
+        makeSseResponse([
+          JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call-1",
+                      type: "function",
+                      function: { name: "lookup", arguments: "{" },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [{ index: 0, function: { arguments: '"city":"NYC"' } }],
+                },
+              },
+            ],
+          }),
+          JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [{ index: 0, function: { arguments: "}" } }],
+                },
+              },
+            ],
+          }),
+        ]),
+      );
+
+      const response = await requestCloudflareChatResponse({
+        modelHandle: "@cf/model",
+        state: DIRECT_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+        stream: true,
+      });
+
+      assert.strictEqual(response?.text, undefined);
+      assert.deepStrictEqual(response?.toolCalls, [
+        {
+          callId: "call-1",
+          name: "lookup",
+          input: { city: "NYC" },
+        },
+      ]);
+      assert.strictEqual(response?.parts.filter((part) => part.type === "tool-call").length, 1);
+      assert.strictEqual(response?.metrics?.deliveryMode, "event-stream");
+      assert.strictEqual(response?.metrics?.timeToFirstTextMs, undefined);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -662,6 +944,13 @@ suite("cloudflare-runtime", () => {
 
       // Either undefined (properly caught abort) or a valid response — not a rethrown error
       assert.ok(result === undefined || typeof result === "string");
+
+      const recorded = getRecentCloudflareRequestMetrics();
+      assert.strictEqual(recorded.length, 1);
+      assert.strictEqual(recorded[0].outcome, "cancelled");
+      assert.strictEqual(recorded[0].endpointKind, "direct");
+      assert.strictEqual(recorded[0].deliveryMode, "unknown");
+      assert.ok(recorded[0].totalDurationMs >= 0);
     });
   });
 });

@@ -2,7 +2,12 @@ import * as assert from "assert";
 import {
   getCloudflareModelHandle,
   fetchCloudflareModels,
+  getCloudflareModelFamily,
+  getCloudflareModelPickerCategory,
+  getCloudflareModelVersion,
   enrichCloudflareModelsWithCapabilities,
+  selectCloudflareCompletionModel,
+  sortCloudflareModels,
 } from "./cloudflare-client";
 import type { CloudflareModel } from "./cloudflare-client";
 
@@ -104,6 +109,44 @@ suite("cloudflare-client", () => {
       assert.deepStrictEqual(result, models);
     });
 
+    test("fetches multiple pages and de-duplicates by model handle", async () => {
+      const capturedUrls: string[] = [];
+      mockFetch(async (url) => {
+        capturedUrls.push(url.toString());
+        const page = new URL(url.toString()).searchParams.get("page");
+        if (page === "1") {
+          return makeJsonResponse({
+            success: true,
+            result: [
+              { id: "m1", name: "@cf/model-one" },
+              { id: "m2", name: "@cf/model-two" },
+            ],
+            result_info: { page: 1, total_pages: 2 },
+            errors: [],
+          });
+        }
+
+        return makeJsonResponse({
+          success: true,
+          result: [
+            { id: "m2-duplicate", name: "@cf/model-two" },
+            { id: "m3", name: "@cf/model-three" },
+          ],
+          result_info: { page: 2, total_pages: 2 },
+          errors: [],
+        });
+      });
+
+      const result = await fetchCloudflareModels("acct", "key", "all");
+      assert.strictEqual(result.length, 3);
+      assert.deepStrictEqual(
+        result.map((model) => getCloudflareModelHandle(model)),
+        ["@cf/model-one", "@cf/model-two", "@cf/model-three"],
+      );
+      assert.ok(capturedUrls[0]?.includes("page=1"));
+      assert.ok(capturedUrls[1]?.includes("page=2"));
+    });
+
     test("sends Authorization header", async () => {
       let capturedHeaders: Record<string, string> | undefined;
       mockFetch(async (_url, init) => {
@@ -192,6 +235,69 @@ suite("cloudflare-client", () => {
         () => fetchCloudflareModels("acct", "key", "Text Generation"),
         /Invalid API key/,
       );
+    });
+  });
+
+  suite("derived model metadata", () => {
+    test("derives family and version from slug handles", () => {
+      const model = makeTextGenModel("uuid-1", "@cf/meta/llama-3.1-8b-instruct");
+
+      assert.strictEqual(getCloudflareModelFamily(model), "meta/llama");
+      assert.strictEqual(getCloudflareModelVersion(model), "3.1");
+    });
+
+    test("derives qwen-style embedded family/version tokens", () => {
+      const model = makeTextGenModel("uuid-2", "@cf/qwen/qwen2.5-coder-7b-instruct");
+
+      assert.strictEqual(getCloudflareModelFamily(model), "qwen/qwen-coder");
+      assert.strictEqual(getCloudflareModelVersion(model), "2.5");
+    });
+
+    test("uses author as the picker category label for text generation models", () => {
+      const model = makeTextGenModel("uuid-3", "@cf/mistral/mistral-small-3.1-instruct");
+
+      assert.deepStrictEqual(getCloudflareModelPickerCategory(model), {
+        label: "Mistral",
+        order: 10,
+      });
+    });
+  });
+
+  suite("model ordering and completion selection", () => {
+    test("sorts richer stable chat models ahead of experimental ones", () => {
+      const sorted = sortCloudflareModels([
+        {
+          ...makeTextGenModel("preview-id", "@cf/meta/llama-4-preview"),
+          description: "Experimental preview release",
+        },
+        {
+          ...makeTextGenModel("stable-id", "@cf/meta/llama-3.3-8b-instruct"),
+          detectedCapabilities: { toolCalling: true, structuredOutput: true },
+        },
+      ]);
+
+      assert.strictEqual(getCloudflareModelHandle(sorted[0]), "@cf/meta/llama-3.3-8b-instruct");
+    });
+
+    test("selects the explicitly configured completion model when present", () => {
+      const selected = selectCloudflareCompletionModel(
+        [
+          makeTextGenModel("uuid-a", "@cf/meta/llama-3.1-70b-instruct"),
+          makeTextGenModel("uuid-b", "@cf/qwen/qwen2.5-coder-7b-instruct"),
+        ],
+        "@cf/meta/llama-3.1-70b-instruct",
+      );
+
+      assert.strictEqual(getCloudflareModelHandle(selected!), "@cf/meta/llama-3.1-70b-instruct");
+    });
+
+    test("prefers code-focused smaller models for completion heuristics", () => {
+      const selected = selectCloudflareCompletionModel([
+        makeTextGenModel("uuid-a", "@cf/meta/llama-3.1-70b-instruct"),
+        makeTextGenModel("uuid-b", "@cf/qwen/qwen2.5-coder-7b-instruct"),
+      ]);
+
+      assert.strictEqual(getCloudflareModelHandle(selected!), "@cf/qwen/qwen2.5-coder-7b-instruct");
     });
   });
 

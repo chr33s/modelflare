@@ -1,11 +1,14 @@
 import * as vscode from "vscode";
-import { CloudflareModel, getCloudflareModelHandle } from "./cloudflare-client";
+import {
+  CloudflareModel,
+  getCloudflareModelHandle,
+  selectCloudflareCompletionModel,
+} from "./cloudflare-client";
 import { CloudflareRequestState, requestCloudflareChatText } from "./cloudflare-runtime";
 
 const COMPLETION_PREFIX_LINES = 120;
 const COMPLETION_SUFFIX_LINES = 40;
 const NON_CODE_LANGUAGE_IDS = new Set(["plaintext", "markdown", "json", "jsonc", "log"]);
-const TEXT_GENERATION_TASK = "Text Generation";
 
 export function buildCompletionPrompt(
   document: vscode.TextDocument,
@@ -64,8 +67,9 @@ export function registerCompletionProvider(
   accountId: string,
   apiKey: string,
   gatewayId?: string,
+  preferredModelHandle?: string,
 ): vscode.Disposable | undefined {
-  const completionModel = models.find((model) => model.task?.name === TEXT_GENERATION_TASK);
+  const completionModel = selectCloudflareCompletionModel(models, preferredModelHandle);
   if (!completionModel) {
     return undefined;
   }
