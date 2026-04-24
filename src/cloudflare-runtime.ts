@@ -376,6 +376,7 @@ function getRecordedErrorMessage(error: unknown): string | undefined {
 }
 
 function recordResponseMetrics(
+  context: vscode.ExtensionContext,
   response: CloudflareChatResponse,
   options: RequestCloudflareChatTextOptions,
   requestStartedAtMs: number,
@@ -385,7 +386,7 @@ function recordResponseMetrics(
     return responseWithDuration;
   }
 
-  recordCloudflareRequestMetric({
+  recordCloudflareRequestMetric(context, {
     accountId: options.state.accountId,
     recordedAt: Date.now(),
     outcome: "success",
@@ -410,13 +411,14 @@ function recordResponseMetrics(
 }
 
 function recordFailedResponseMetrics(
+  context: vscode.ExtensionContext,
   options: RequestCloudflareChatTextOptions,
   endpointKind: CloudflareEndpointKind,
   requestStartedAtMs: number,
   gatewayFallbackToDirect: boolean,
   error: unknown,
 ): void {
-  recordCloudflareRequestMetric({
+  recordCloudflareRequestMetric(context, {
     accountId: options.state.accountId,
     recordedAt: Date.now(),
     outcome: "error",
@@ -433,12 +435,13 @@ function recordFailedResponseMetrics(
 }
 
 function recordCancelledResponseMetrics(
+  context: vscode.ExtensionContext,
   options: RequestCloudflareChatTextOptions,
   endpointKind: CloudflareEndpointKind,
   requestStartedAtMs: number,
   gatewayFallbackToDirect: boolean,
 ): void {
-  recordCloudflareRequestMetric({
+  recordCloudflareRequestMetric(context, {
     accountId: options.state.accountId,
     recordedAt: Date.now(),
     outcome: "cancelled",
@@ -1339,12 +1342,47 @@ async function requestCloudflareEndpoint(
     body.stream = true;
   }
 
-  const response = await fetch(target.url, {
-    method: "POST",
-    headers: buildCloudflareHeaders(options.state, target.kind),
-    body: JSON.stringify(body),
-    signal,
-  });
+  let response: Response | undefined;
+  let retries = 0;
+  const maxRetries = 3;
+
+  while (true) {
+    response = await fetch(target.url, {
+      method: "POST",
+      headers: buildCloudflareHeaders(options.state, target.kind),
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (
+      !response.ok &&
+      (response.status === 429 ||
+        response.status === 502 ||
+        response.status === 503 ||
+        response.status === 504) &&
+      retries < maxRetries &&
+      !signal.aborted
+    ) {
+      retries++;
+      const delayMs = Math.pow(2, retries) * 500 + Math.random() * 200;
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, delayMs);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timeout);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      if (signal.aborted) {
+        throw new DOMException("The user aborted a request.", "AbortError");
+      }
+      continue;
+    }
+    break;
+  }
 
   if (response.ok && isEventStreamResponse(response)) {
     return parseCloudflareEventStream(response, options, target.kind, requestStartedAtMs);
@@ -1368,6 +1406,7 @@ async function requestCloudflareEndpoint(
 }
 
 export async function requestCloudflareChatResponse(
+  context: vscode.ExtensionContext,
   options: RequestCloudflareChatTextOptions,
 ): Promise<CloudflareChatResponse | undefined> {
   const requestStartedAtMs = Date.now();
@@ -1376,6 +1415,7 @@ export async function requestCloudflareChatResponse(
 
   if (options.token.isCancellationRequested) {
     recordCancelledResponseMetrics(
+      context,
       options,
       activeEndpointKind,
       requestStartedAtMs,
@@ -1399,6 +1439,7 @@ export async function requestCloudflareChatResponse(
     if (!options.state.gatewayId) {
       activeEndpointKind = "direct";
       return recordResponseMetrics(
+        context,
         await requestCloudflareEndpoint(options, directTarget, abortController.signal),
         options,
         requestStartedAtMs,
@@ -1413,6 +1454,7 @@ export async function requestCloudflareChatResponse(
     try {
       activeEndpointKind = "gateway";
       return recordResponseMetrics(
+        context,
         await requestCloudflareEndpoint(options, gatewayTarget, abortController.signal),
         options,
         requestStartedAtMs,
@@ -1431,6 +1473,7 @@ export async function requestCloudflareChatResponse(
           abortController.signal,
         );
         return recordResponseMetrics(
+          context,
           markGatewayFallback(directResponse),
           options,
           requestStartedAtMs,
@@ -1452,6 +1495,7 @@ export async function requestCloudflareChatResponse(
       error.name === "AbortError"
     ) {
       recordCancelledResponseMetrics(
+        context,
         options,
         activeEndpointKind,
         requestStartedAtMs,
@@ -1461,6 +1505,7 @@ export async function requestCloudflareChatResponse(
     }
 
     recordFailedResponseMetrics(
+      context,
       options,
       activeEndpointKind,
       requestStartedAtMs,
@@ -1474,8 +1519,9 @@ export async function requestCloudflareChatResponse(
 }
 
 export async function requestCloudflareChatText(
+  context: vscode.ExtensionContext,
   options: RequestCloudflareChatTextOptions,
 ): Promise<string | undefined> {
-  const response = await requestCloudflareChatResponse(options);
+  const response = await requestCloudflareChatResponse(context, options);
   return response?.text;
 }

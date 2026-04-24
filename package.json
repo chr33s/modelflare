@@ -84,6 +84,11 @@
             "log"
           ],
           "description": "Language IDs that should not receive inline completions."
+        },
+        "cloudflareCopilot.capabilityOverrides": {
+          "type": "object",
+          "default": {},
+          "description": "Map model handles to specific capabilities to override automatic capability detection. Keys should be model handles, values are objects like { \"toolCalling\": true }."
         }
       }
     },

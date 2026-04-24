@@ -11,6 +11,10 @@ import {
 } from "./model-provider";
 import type { CloudflareModel } from "./cloudflare-client";
 
+const mockContext = {
+  workspaceState: { get: () => undefined, update: () => {} },
+} as unknown as vscode.ExtensionContext;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -196,7 +200,7 @@ suite("model-provider", () => {
 
   suite("provider model metadata", () => {
     test("derives family, version, and category from the model handle", () => {
-      const provider = registerModelProvider();
+      const provider = registerModelProvider(mockContext);
 
       try {
         provider.updateModels(
@@ -220,7 +224,7 @@ suite("model-provider", () => {
     });
 
     test("orders richer stable chat models ahead of preview variants", () => {
-      const provider = registerModelProvider();
+      const provider = registerModelProvider(mockContext);
 
       try {
         provider.updateModels(
@@ -461,7 +465,7 @@ suite("model-provider", () => {
 
   suite("provider token accounting", () => {
     test("derives effective maxInputTokens from model metadata", () => {
-      const provider = registerModelProvider();
+      const provider = registerModelProvider(mockContext);
 
       try {
         provider.updateModels(
@@ -483,7 +487,7 @@ suite("model-provider", () => {
     });
 
     test("counts message overhead for text and data parts", async () => {
-      const provider = registerModelProvider();
+      const provider = registerModelProvider(mockContext);
       const tokenSource = new vscode.CancellationTokenSource();
 
       try {
@@ -510,7 +514,7 @@ suite("model-provider", () => {
     });
 
     test("rejects requests that exceed the estimated context window", async () => {
-      const provider = registerModelProvider();
+      const provider = registerModelProvider(mockContext);
       const tokenSource = new vscode.CancellationTokenSource();
 
       try {

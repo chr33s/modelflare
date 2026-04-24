@@ -1,5 +1,6 @@
 import * as assert from "assert";
 import type { CancellationToken } from "vscode";
+import * as vscode from "vscode";
 import {
   buildCloudflareEndpoint,
   requestCloudflareChatResponse,
@@ -14,6 +15,13 @@ import type {
   CloudflareChatMessage,
   CloudflareToolDefinition,
 } from "./cloudflare-runtime";
+
+const mockContext = {
+  workspaceState: {
+    get: () => undefined,
+    update: () => {},
+  },
+} as unknown as vscode.ExtensionContext;
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
@@ -151,7 +159,7 @@ suite("cloudflare-runtime", () => {
 
   suite("requestCloudflareChatText", () => {
     test("returns undefined when token is already cancelled", async () => {
-      const result = await requestCloudflareChatText({
+      const result = await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -176,7 +184,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "hi" } });
       });
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/meta/llama",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -195,7 +203,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "ok" } });
       });
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -218,7 +226,7 @@ suite("cloudflare-runtime", () => {
         { role: "user", content: "Hi" },
       ];
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages,
@@ -240,7 +248,7 @@ suite("cloudflare-runtime", () => {
         { type: "function", function: { name: "myTool", description: "A tool" } },
       ];
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -261,7 +269,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "ok" } });
       });
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -281,7 +289,7 @@ suite("cloudflare-runtime", () => {
   suite("requestCloudflareChatText — text extraction", () => {
     async function getText(responseBody: unknown): Promise<string | undefined> {
       mockFetch(async () => makeJsonResponse(responseBody));
-      return requestCloudflareChatText({
+      return requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -336,7 +344,7 @@ suite("cloudflare-runtime", () => {
 
     test("trims trailing whitespace when trimEnd is true", async () => {
       mockFetch(async () => makeJsonResponse({ result: { response: "trailing   \n" } }));
-      const result = await requestCloudflareChatText({
+      const result = await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -349,7 +357,7 @@ suite("cloudflare-runtime", () => {
 
     test("preserves trailing whitespace when trimEnd is false", async () => {
       mockFetch(async () => makeJsonResponse({ result: { response: "text   " } }));
-      const result = await requestCloudflareChatText({
+      const result = await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -365,7 +373,7 @@ suite("cloudflare-runtime", () => {
 
       await assert.rejects(
         () =>
-          requestCloudflareChatText({
+          requestCloudflareChatText(mockContext, {
             modelHandle: "@cf/model",
             state: DIRECT_STATE,
             messages: MESSAGES,
@@ -381,7 +389,7 @@ suite("cloudflare-runtime", () => {
 
       await assert.rejects(
         () =>
-          requestCloudflareChatText({
+          requestCloudflareChatText(mockContext, {
             modelHandle: "@cf/model",
             state: DIRECT_STATE,
             messages: MESSAGES,
@@ -405,7 +413,7 @@ suite("cloudflare-runtime", () => {
 
       await assert.rejects(
         () =>
-          requestCloudflareChatText({
+          requestCloudflareChatText(mockContext, {
             modelHandle: "@cf/model",
             state: DIRECT_STATE,
             messages: MESSAGES,
@@ -432,7 +440,7 @@ suite("cloudflare-runtime", () => {
         }),
       );
 
-      const result = await requestCloudflareChatText({
+      const result = await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -456,7 +464,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "ok" } });
       });
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: GATEWAY_STATE,
         messages: MESSAGES,
@@ -474,7 +482,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "ok" } });
       });
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: GATEWAY_STATE,
         messages: MESSAGES,
@@ -492,7 +500,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "ok" } });
       });
 
-      await requestCloudflareChatText({
+      await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -515,7 +523,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "direct fallback" } });
       });
 
-      const result = await requestCloudflareChatText({
+      const result = await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: GATEWAY_STATE,
         messages: MESSAGES,
@@ -539,7 +547,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "direct fallback" } });
       });
 
-      const response = await requestCloudflareChatResponse({
+      const response = await requestCloudflareChatResponse(mockContext, {
         modelHandle: "@cf/model",
         state: GATEWAY_STATE,
         messages: MESSAGES,
@@ -566,7 +574,7 @@ suite("cloudflare-runtime", () => {
 
       await assert.rejects(
         () =>
-          requestCloudflareChatText({
+          requestCloudflareChatText(mockContext, {
             modelHandle: "@cf/model",
             state: GATEWAY_STATE,
             messages: MESSAGES,
@@ -589,7 +597,7 @@ suite("cloudflare-runtime", () => {
 
       await assert.rejects(
         () =>
-          requestCloudflareChatText({
+          requestCloudflareChatText(mockContext, {
             modelHandle: "@cf/model",
             state: GATEWAY_STATE,
             messages: MESSAGES,
@@ -609,7 +617,7 @@ suite("cloudflare-runtime", () => {
   suite("requestCloudflareChatResponse — tool calls", () => {
     async function getResponse(body: unknown) {
       mockFetch(async () => makeJsonResponse(body));
-      return requestCloudflareChatResponse({
+      return requestCloudflareChatResponse(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -778,7 +786,7 @@ suite("cloudflare-runtime", () => {
         ]);
       });
 
-      const response = await requestCloudflareChatResponse({
+      const response = await requestCloudflareChatResponse(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -829,7 +837,7 @@ suite("cloudflare-runtime", () => {
         return makeJsonResponse({ result: { response: "fallback json" } });
       });
 
-      const response = await requestCloudflareChatResponse({
+      const response = await requestCloudflareChatResponse(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -889,7 +897,7 @@ suite("cloudflare-runtime", () => {
         ]),
       );
 
-      const response = await requestCloudflareChatResponse({
+      const response = await requestCloudflareChatResponse(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,
@@ -934,7 +942,7 @@ suite("cloudflare-runtime", () => {
       });
 
       // If the token is already cancelled when the AbortError is checked, returns undefined
-      const result = await requestCloudflareChatText({
+      const result = await requestCloudflareChatText(mockContext, {
         modelHandle: "@cf/model",
         state: DIRECT_STATE,
         messages: MESSAGES,

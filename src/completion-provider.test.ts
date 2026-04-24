@@ -4,6 +4,10 @@ import { buildCompletionPrompt } from "./completion-provider";
 import { registerCompletionProvider } from "./completion-provider";
 import type { CloudflareModel } from "./cloudflare-client";
 
+const mockContext = {
+  workspaceState: { get: () => undefined, update: () => {} },
+} as unknown as vscode.ExtensionContext;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -29,14 +33,14 @@ suite("completion-provider", () => {
     test("contains cursor marker", async () => {
       const doc = await openDoc("const x = 1;");
       const pos = new vscode.Position(0, 6);
-      const prompt = buildCompletionPrompt(doc, pos);
+      const prompt = buildCompletionPrompt("generic-model", doc, pos);
       assert.ok(prompt.includes("<cursor />"), "Missing <cursor /> marker");
     });
 
     test("contains before and after sections", async () => {
       const doc = await openDoc("const x = 1;\nconst y = 2;");
       const pos = new vscode.Position(0, 6);
-      const prompt = buildCompletionPrompt(doc, pos);
+      const prompt = buildCompletionPrompt("generic-model", doc, pos);
       assert.ok(prompt.includes("<before>"));
       assert.ok(prompt.includes("</before>"));
       assert.ok(prompt.includes("<after>"));
@@ -46,7 +50,7 @@ suite("completion-provider", () => {
     test("puts text before cursor in <before> section", async () => {
       const doc = await openDoc("hello world");
       const pos = new vscode.Position(0, 5);
-      const prompt = buildCompletionPrompt(doc, pos);
+      const prompt = buildCompletionPrompt("generic-model", doc, pos);
       const beforeSection = prompt.slice(
         prompt.indexOf("<before>") + "<before>".length,
         prompt.indexOf("</before>"),
@@ -58,7 +62,7 @@ suite("completion-provider", () => {
     test("puts text after cursor in <after> section", async () => {
       const doc = await openDoc("hello world");
       const pos = new vscode.Position(0, 5);
-      const prompt = buildCompletionPrompt(doc, pos);
+      const prompt = buildCompletionPrompt("generic-model", doc, pos);
       const afterSection = prompt.slice(
         prompt.indexOf("<after>") + "<after>".length,
         prompt.indexOf("</after>"),
@@ -69,7 +73,7 @@ suite("completion-provider", () => {
     test("contains instruction to return only completion text", async () => {
       const doc = await openDoc("");
       const pos = new vscode.Position(0, 0);
-      const prompt = buildCompletionPrompt(doc, pos);
+      const prompt = buildCompletionPrompt("generic-model", doc, pos);
       assert.ok(prompt.toLowerCase().includes("completion"));
     });
   });
@@ -83,17 +87,17 @@ suite("completion-provider", () => {
       const models: CloudflareModel[] = [
         { id: "img-id", name: "@cf/img", task: { id: "t", name: "Image Classification" } },
       ];
-      const result = registerCompletionProvider(models, "acct", "key");
+      const result = registerCompletionProvider(mockContext, models, "acct", "key");
       assert.strictEqual(result, undefined);
     });
 
     test("returns undefined when models array is empty", () => {
-      const result = registerCompletionProvider([], "acct", "key");
+      const result = registerCompletionProvider(mockContext, [], "acct", "key");
       assert.strictEqual(result, undefined);
     });
 
     test("returns a Disposable when a Text Generation model is present", () => {
-      const result = registerCompletionProvider([makeTextGenModel()], "acct", "key");
+      const result = registerCompletionProvider(mockContext, [makeTextGenModel()], "acct", "key");
       assert.ok(result !== undefined, "Expected a Disposable");
       assert.ok(typeof result.dispose === "function");
       result.dispose();

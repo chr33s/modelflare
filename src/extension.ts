@@ -7,6 +7,7 @@ import {
   AggregatedCloudflareRequestMetric,
   RecordedCloudflareRequestMetric,
   summarizeCloudflareRequestMetrics,
+  loadCloudflareRequestMetrics,
 } from "./request-metrics";
 
 const SECRET_KEY = "cloudflare-api-key";
@@ -153,6 +154,7 @@ async function loadAndRegisterModels(
   const gatewayId = config.get<string>("gatewayId");
   const modelFilter = config.get<string>("modelFilter") ?? "Text Generation";
   const completionModel = config.get<string>("completionModel");
+  const capabilityOverrides = config.get<Record<string, any>>("capabilityOverrides") ?? {};
   const apiKey = await getApiKey(context);
 
   if (!accountId || !apiKey) {
@@ -186,16 +188,18 @@ async function loadAndRegisterModels(
           accountId,
           apiKey,
           models,
+          capabilityOverrides,
         );
 
         if (enrichedModels.length === 0) {
           throw new Error(getNoModelsFoundMessage(modelFilter));
         }
 
-        providerRegistration ??= registerModelProvider();
+        providerRegistration ??= registerModelProvider(context);
         providerRegistration.updateModels(enrichedModels, accountId, apiKey, gatewayId);
         disposeCompletionRegistration();
         completionRegistration = registerCompletionProvider(
+          context,
           enrichedModels,
           accountId,
           apiKey,
@@ -415,7 +419,8 @@ async function inspectRegisteredModels(): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  providerRegistration = registerModelProvider();
+  loadCloudflareRequestMetrics(context);
+  providerRegistration = registerModelProvider(context);
 
   // Command: Refresh models
   context.subscriptions.push(

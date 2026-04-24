@@ -97,6 +97,13 @@ function decodeText(data: Uint8Array): string {
   return new TextDecoder().decode(data);
 }
 
+export class UnsupportedDataFormatError extends Error {
+  constructor() {
+    super("Unsupported multimodal data format passed to Cloudflare model");
+    this.name = "UnsupportedDataFormatError";
+  }
+}
+
 function toDataPartLike(value: unknown): { data: Uint8Array; mimeType: string } | undefined {
   if (value instanceof vscode.LanguageModelDataPart) {
     return { data: value.data, mimeType: value.mimeType };
@@ -122,24 +129,19 @@ function toDataPartLike(value: unknown): { data: Uint8Array; mimeType: string } 
     return { data: Uint8Array.from(rawData), mimeType };
   }
 
-  if (rawData && typeof rawData === "object") {
-    const numericEntries = Object.entries(rawData)
-      .filter((entry): entry is [string, number] => typeof entry[1] === "number")
-      .sort((left, right) => Number(left[0]) - Number(right[0]));
-
-    if (numericEntries.length > 0) {
-      return {
-        data: Uint8Array.from(numericEntries.map((entry) => entry[1])),
-        mimeType,
-      };
-    }
-  }
-
-  return undefined;
+  throw new UnsupportedDataFormatError();
 }
 
 function stringifyDataPartLike(value: unknown): string | undefined {
-  const dataPart = toDataPartLike(value);
+  let dataPart: { data: Uint8Array; mimeType: string } | undefined;
+  try {
+    dataPart = toDataPartLike(value);
+  } catch (err) {
+    if (err instanceof UnsupportedDataFormatError) {
+      return undefined;
+    }
+    throw err;
+  }
   if (!dataPart) {
     return undefined;
   }
@@ -330,7 +332,16 @@ function estimateInputPartTokens(part: unknown): number {
     return estimateTextTokens(part.value);
   }
 
-  const dataPart = toDataPartLike(part);
+  let dataPart: { data: Uint8Array; mimeType: string } | undefined;
+  try {
+    dataPart = toDataPartLike(part);
+  } catch (err) {
+    if (err instanceof UnsupportedDataFormatError) {
+      dataPart = undefined;
+    } else {
+      throw err;
+    }
+  }
   if (dataPart) {
     if (dataPart.mimeType.startsWith("image/")) {
       return Math.max(
@@ -815,6 +826,8 @@ class CloudflareModelProvider
   private modelsById = new Map<string, CloudflareModel>();
   private state: CloudflareRequestState | undefined;
 
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
   readonly onDidChangeLanguageModelChatInformation = this.onDidChangeEmitter.event;
 
   updateModels(
@@ -890,7 +903,7 @@ class CloudflareModelProvider
       );
     }
 
-    const response = await requestCloudflareChatResponse({
+    const response = await requestCloudflareChatResponse(this.context, {
       modelHandle: getCloudflareModelHandle(cloudflareModel),
       state: this.state,
       messages: toCloudflareMessages(messages),
@@ -899,7 +912,7 @@ class CloudflareModelProvider
       token,
       errorLabel: "model",
       stream: true,
-      onTextChunk: (text) => {
+      onTextChunk: (text: string) => {
         if (text.length > 0) {
           progress.report(new vscode.LanguageModelTextPart(text));
         }
@@ -929,6 +942,6 @@ class CloudflareModelProvider
   }
 }
 
-export function registerModelProvider(): RegisteredModelProvider {
-  return new CloudflareModelProvider();
+export function registerModelProvider(context: vscode.ExtensionContext): RegisteredModelProvider {
+  return new CloudflareModelProvider(context);
 }

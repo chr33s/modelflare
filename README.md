@@ -10,7 +10,9 @@ Automatically fetches and surfaces all **Cloudflare Workers AI** models in the V
 - 🔃 Manual refresh via command palette
 - 🔎 Inspect which Cloudflare models VS Code actually exposes through the LM API
 - 🛠 Detects tool-calling, image-input, structured-output, reasoning, and audio capabilities from Cloudflare model schemas when available
-- ✨ Inline code completions powered by discovered Cloudflare text generation models
+- ✨ Inline code completions powered by discovered Cloudflare text generation models with specific Fill-In-The-Middle (FIM) templates for Qwen and DeepSeek models
+- 🛡️ High resilience with exponential backoff on HTTP 429/5xx errors
+- 📈 Persistent local telemetry tracking request counts and tokens across workspace reloads
 
 ## Setup
 
@@ -24,13 +26,14 @@ Automatically fetches and surfaces all **Cloudflare Workers AI** models in the V
 
 ## Settings
 
-| Setting                             | Description                               | Default           |
-| ----------------------------------- | ----------------------------------------- | ----------------- |
-| `cloudflareCopilot.accountId`       | Cloudflare Account ID                     | —                 |
-| `cloudflareCopilot.apiKey`          | API Key (prefer secret storage)           | —                 |
-| `cloudflareCopilot.gatewayId`       | AI Gateway ID (optional)                  | —                 |
-| `cloudflareCopilot.modelFilter`     | `Text Generation` or `all`                | `Text Generation` |
-| `cloudflareCopilot.completionModel` | Optional inline completion model override | `""`              |
+| Setting                                 | Description                                       | Default           |
+| --------------------------------------- | ------------------------------------------------- | ----------------- |
+| `cloudflareCopilot.accountId`           | Cloudflare Account ID                             | —                 |
+| `cloudflareCopilot.apiKey`              | API Key (prefer secret storage)                   | —                 |
+| `cloudflareCopilot.gatewayId`           | AI Gateway ID (optional)                          | —                 |
+| `cloudflareCopilot.modelFilter`         | `Text Generation` or `all`                        | `Text Generation` |
+| `cloudflareCopilot.completionModel`     | Optional inline completion model override         | `""`              |
+| `cloudflareCopilot.capabilityOverrides` | JSON object overriding default model capabilities | `{}`              |
 
 ## Architecture
 

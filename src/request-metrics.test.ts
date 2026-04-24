@@ -1,4 +1,10 @@
 import * as assert from "assert";
+import * as vscode from "vscode";
+
+const mockContext = {
+  workspaceState: { get: () => undefined, update: () => {} },
+} as unknown as vscode.ExtensionContext;
+
 import {
   clearCloudflareRequestMetrics,
   getRecentCloudflareRequestMetrics,
@@ -16,7 +22,7 @@ suite("request-metrics", () => {
   });
 
   test("records newest request first", () => {
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 1,
       outcome: "success",
@@ -28,7 +34,7 @@ suite("request-metrics", () => {
       gatewayFallbackToDirect: false,
       totalDurationMs: 30,
     });
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 2,
       outcome: "success",
@@ -48,7 +54,7 @@ suite("request-metrics", () => {
   });
 
   test("returns defensive copies of usage data", () => {
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 1,
       outcome: "success",
@@ -75,7 +81,7 @@ suite("request-metrics", () => {
   });
 
   test("records error details for failed requests", () => {
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 3,
       outcome: "error",
@@ -98,7 +104,7 @@ suite("request-metrics", () => {
   });
 
   test("summarizes recent request metrics by model", () => {
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 1,
       outcome: "success",
@@ -111,7 +117,7 @@ suite("request-metrics", () => {
       totalDurationMs: 20,
       timeToFirstTextMs: 8,
     });
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 2,
       outcome: "error",
@@ -125,7 +131,7 @@ suite("request-metrics", () => {
       errorStatus: 503,
       errorMessage: "Service Unavailable",
     });
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 3,
       outcome: "cancelled",
@@ -167,7 +173,7 @@ suite("request-metrics", () => {
   });
 
   test("keeps metrics for the same model handle separate by account", () => {
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-a",
       recordedAt: 1,
       outcome: "success",
@@ -179,7 +185,7 @@ suite("request-metrics", () => {
       gatewayFallbackToDirect: false,
       totalDurationMs: 10,
     });
-    recordCloudflareRequestMetric({
+    recordCloudflareRequestMetric(mockContext, {
       accountId: "acct-b",
       recordedAt: 2,
       outcome: "success",

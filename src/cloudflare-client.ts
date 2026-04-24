@@ -674,17 +674,7 @@ async function detectModelCapabilities(
   apiKey: string,
   modelHandle: string,
   capabilityCache: Map<string, DetectedCloudflareModelCapabilities | undefined>,
-): Promise<
-  | {
-      toolCalling?: boolean;
-      imageInput?: boolean;
-      structuredOutput?: boolean;
-      reasoning?: boolean;
-      audioInput?: boolean;
-      audioOutput?: boolean;
-    }
-  | undefined
-> {
+): Promise<DetectedCloudflareModelCapabilities | undefined> {
   if (capabilityCache.has(modelHandle)) {
     return capabilityCache.get(modelHandle);
   }
@@ -714,12 +704,17 @@ export async function enrichCloudflareModelsWithCapabilities(
   accountId: string,
   apiKey: string,
   models: CloudflareModel[],
+  overrides: Record<string, Partial<DetectedCloudflareModelCapabilities>> = {},
 ): Promise<CloudflareModel[]> {
   const capabilityCache = new Map<string, DetectedCloudflareModelCapabilities | undefined>();
-  const enrichedModels = models.map((model) => ({
-    ...model,
-    detectedCapabilities: { ...model.detectedCapabilities },
-  }));
+  const enrichedModels = models.map((model) => {
+    const handle = getCloudflareModelHandle(model);
+    const modelOverrides = overrides[handle] || {};
+    return {
+      ...model,
+      detectedCapabilities: { ...model.detectedCapabilities, ...modelOverrides },
+    };
+  });
 
   const candidateIndexes = enrichedModels
     .map((model, index) => ({ model, index }))
@@ -744,9 +739,12 @@ export async function enrichCloudflareModelsWithCapabilities(
         continue;
       }
 
+      const handle = getCloudflareModelHandle(enrichedModels[result.modelIndex]);
+      const currentOverrides = overrides[handle] || {};
       enrichedModels[result.modelIndex].detectedCapabilities = {
         ...enrichedModels[result.modelIndex].detectedCapabilities,
         ...result.detectedCapabilities,
+        ...currentOverrides,
       };
     }
   }

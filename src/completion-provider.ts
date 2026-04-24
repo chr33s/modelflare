@@ -43,6 +43,7 @@ function getCompletionExcludedLanguages(): ReadonlySet<string> {
 }
 
 export function buildCompletionPrompt(
+  modelHandle: string,
   document: vscode.TextDocument,
   position: vscode.Position,
 ): string {
@@ -51,6 +52,11 @@ export function buildCompletionPrompt(
   const suffixEnd = document.lineAt(suffixEndLine).range.end;
   const before = document.getText(new vscode.Range(prefixStart, position));
   const after = document.getText(new vscode.Range(position, suffixEnd));
+
+  const lowerHandle = modelHandle.toLowerCase();
+  if (lowerHandle.includes("deepseek") || lowerHandle.includes("qwen")) {
+    return `<|fim_prefix|>${before}<|fim_hole|>${after}<|fim_suffix|>`;
+  }
 
   return [
     "Complete the code at <cursor>.",
@@ -67,13 +73,14 @@ export function buildCompletionPrompt(
 }
 
 async function fetchCompletion(
+  context: vscode.ExtensionContext,
   modelHandle: string,
   state: CloudflareRequestState,
   systemPrompt: string,
   prompt: string,
   token: vscode.CancellationToken,
 ): Promise<string> {
-  const text = await requestCloudflareChatText({
+  const text = await requestCloudflareChatText(context, {
     modelHandle,
     state,
     messages: [
@@ -95,6 +102,7 @@ async function fetchCompletion(
 }
 
 export function registerCompletionProvider(
+  context: vscode.ExtensionContext,
   models: CloudflareModel[],
   accountId: string,
   apiKey: string,
@@ -123,8 +131,9 @@ export function registerCompletionProvider(
           return [];
         }
 
-        const prompt = buildCompletionPrompt(document, position);
+        const prompt = buildCompletionPrompt(completionModelHandle, document, position);
         const completionText = await fetchCompletion(
+          context,
           completionModelHandle,
           state,
           completionSystemPrompt,

@@ -1,3 +1,5 @@
+import * as vscode from "vscode";
+
 export interface RecordedCloudflareUsage {
   promptTokens?: number;
   completionTokens?: number;
@@ -52,10 +54,34 @@ interface MutableAggregatedCloudflareRequestMetric extends AggregatedCloudflareR
 }
 
 const MAX_RECORDED_REQUEST_METRICS = 25;
+const TELEMETRY_STATE_KEY = "cloudflareCopilot.requestMetrics";
 
-const recordedRequestMetrics: RecordedCloudflareRequestMetric[] = [];
+let recordedRequestMetrics: RecordedCloudflareRequestMetric[] = [];
 
-export function recordCloudflareRequestMetric(metric: RecordedCloudflareRequestMetric): void {
+export function loadCloudflareRequestMetrics(context: vscode.ExtensionContext): void {
+  try {
+    const stored =
+      context.workspaceState.get<RecordedCloudflareRequestMetric[]>(TELEMETRY_STATE_KEY);
+    if (Array.isArray(stored)) {
+      recordedRequestMetrics = stored;
+    }
+  } catch (err) {
+    console.error("Failed to load metrics telemetry", err);
+  }
+}
+
+export function saveCloudflareRequestMetrics(context: vscode.ExtensionContext): void {
+  try {
+    context.workspaceState.update(TELEMETRY_STATE_KEY, recordedRequestMetrics);
+  } catch (err) {
+    console.error("Failed to save metrics telemetry", err);
+  }
+}
+
+export function recordCloudflareRequestMetric(
+  context: vscode.ExtensionContext,
+  metric: RecordedCloudflareRequestMetric,
+): void {
   recordedRequestMetrics.unshift({
     ...metric,
     usage: metric.usage ? { ...metric.usage } : undefined,
@@ -64,6 +90,8 @@ export function recordCloudflareRequestMetric(metric: RecordedCloudflareRequestM
   if (recordedRequestMetrics.length > MAX_RECORDED_REQUEST_METRICS) {
     recordedRequestMetrics.length = MAX_RECORDED_REQUEST_METRICS;
   }
+
+  saveCloudflareRequestMetrics(context);
 }
 
 export function getRecentCloudflareRequestMetrics(): readonly RecordedCloudflareRequestMetric[] {
@@ -73,8 +101,11 @@ export function getRecentCloudflareRequestMetrics(): readonly RecordedCloudflare
   }));
 }
 
-export function clearCloudflareRequestMetrics(): void {
+export function clearCloudflareRequestMetrics(context?: vscode.ExtensionContext): void {
   recordedRequestMetrics.length = 0;
+  if (context) {
+    saveCloudflareRequestMetrics(context);
+  }
 }
 
 export function summarizeCloudflareRequestMetrics(
