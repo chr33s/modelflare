@@ -85,6 +85,20 @@ function disposePendingReload(): void {
   }
 }
 
+function disposeInspectOutputChannel(): void {
+  if (inspectOutputChannel) {
+    inspectOutputChannel.dispose();
+    inspectOutputChannel = undefined;
+  }
+}
+
+function disposeExtensionState(): void {
+  disposeProviderRegistration();
+  disposeCompletionRegistration();
+  disposeInspectOutputChannel();
+  disposePendingReload();
+}
+
 function getOutputChannel(): vscode.OutputChannel {
   if (!inspectOutputChannel) {
     inspectOutputChannel = vscode.window.createOutputChannel("Cloudflare Copilot Models");
@@ -312,7 +326,8 @@ export function formatRecordedRequestMetric(metric: RecordedCloudflareRequestMet
     typeof metric.timeToFirstTextMs === "number" ? `${metric.timeToFirstTextMs}ms` : "n/a";
   const fallback = metric.gatewayFallbackToDirect ? " | fallback=gateway->direct" : "";
   return (
-    `${new Date(metric.recordedAt).toISOString()} | ${metric.requestKind} ${metric.modelHandle}` +
+    `${new Date(metric.recordedAt).toISOString()} | account=${metric.accountId}` +
+    ` | ${metric.requestKind} ${metric.modelHandle}` +
     ` | outcome=${metric.outcome}` +
     ` | transport=${metric.endpointKind}/${metric.deliveryMode}` +
     ` | requestedStream=${metric.requestedStream}` +
@@ -323,7 +338,7 @@ export function formatRecordedRequestMetric(metric: RecordedCloudflareRequestMet
 
 export function formatRequestMetricSummary(summary: AggregatedCloudflareRequestMetric): string {
   return (
-    `${summary.modelHandle} | total=${summary.totalCount}` +
+    `account=${summary.accountId} | ${summary.modelHandle} | total=${summary.totalCount}` +
     ` success=${summary.successCount} error=${summary.errorCount} cancelled=${summary.cancelledCount}` +
     ` | avgDuration=${formatAverageMs(summary.averageTotalDurationMs)}` +
     ` avgTtft=${formatAverageMs(summary.averageTimeToFirstTextMs)}` +
@@ -399,7 +414,7 @@ async function inspectRegisteredModels(): Promise<void> {
   );
 }
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export function activate(context: vscode.ExtensionContext): void {
   providerRegistration = registerModelProvider();
 
   // Command: Refresh models
@@ -449,17 +464,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  // Ensure provider registration is disposed on deactivate without duplicating subscriptions on refresh.
-  context.subscriptions.push(new vscode.Disposable(() => disposeProviderRegistration()));
-  context.subscriptions.push(new vscode.Disposable(() => disposeCompletionRegistration()));
-  context.subscriptions.push(new vscode.Disposable(() => inspectOutputChannel?.dispose()));
-  context.subscriptions.push(new vscode.Disposable(() => disposePendingReload()));
-
   // Auto-load on activation
-  await loadAndRegisterModels(context, INTERACTIVE_LOAD_OPTIONS);
+  void loadAndRegisterModels(context, INTERACTIVE_LOAD_OPTIONS);
 }
 
 export function deactivate(): void {
-  disposeProviderRegistration();
-  disposeCompletionRegistration();
+  disposeExtensionState();
 }

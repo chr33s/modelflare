@@ -8,7 +8,39 @@ import { CloudflareRequestState, requestCloudflareChatText } from "./cloudflare-
 
 const COMPLETION_PREFIX_LINES = 120;
 const COMPLETION_SUFFIX_LINES = 40;
-const NON_CODE_LANGUAGE_IDS = new Set(["plaintext", "markdown", "json", "jsonc", "log"]);
+const DEFAULT_COMPLETION_SYSTEM_PROMPT =
+  "You are a precise code completion engine. Return only the completion with no markdown or explanation.";
+const DEFAULT_COMPLETION_EXCLUDED_LANGUAGE_IDS = [
+  "plaintext",
+  "markdown",
+  "json",
+  "jsonc",
+  "log",
+] as const;
+
+function getCompletionSystemPrompt(): string {
+  const configuredPrompt = vscode.workspace
+    .getConfiguration("cloudflareCopilot")
+    .get<string>("completionSystemPrompt")
+    ?.trim();
+
+  return configuredPrompt && configuredPrompt.length > 0
+    ? configuredPrompt
+    : DEFAULT_COMPLETION_SYSTEM_PROMPT;
+}
+
+function getCompletionExcludedLanguages(): ReadonlySet<string> {
+  const configuredLanguages = vscode.workspace
+    .getConfiguration("cloudflareCopilot")
+    .get<string[]>("completionExcludedLanguages");
+  const languageIds = configuredLanguages ?? [...DEFAULT_COMPLETION_EXCLUDED_LANGUAGE_IDS];
+
+  return new Set(
+    languageIds
+      .map((languageId) => languageId.trim())
+      .filter((languageId) => languageId.length > 0),
+  );
+}
 
 export function buildCompletionPrompt(
   document: vscode.TextDocument,
@@ -37,6 +69,7 @@ export function buildCompletionPrompt(
 async function fetchCompletion(
   modelHandle: string,
   state: CloudflareRequestState,
+  systemPrompt: string,
   prompt: string,
   token: vscode.CancellationToken,
 ): Promise<string> {
@@ -46,8 +79,7 @@ async function fetchCompletion(
     messages: [
       {
         role: "system",
-        content:
-          "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
+        content: systemPrompt,
       },
       {
         role: "user",
@@ -75,6 +107,8 @@ export function registerCompletionProvider(
   }
 
   const completionModelHandle = getCloudflareModelHandle(completionModel);
+  const completionSystemPrompt = getCompletionSystemPrompt();
+  const excludedLanguageIds = getCompletionExcludedLanguages();
   const state: CloudflareRequestState = { accountId, apiKey, gatewayId };
 
   return vscode.languages.registerInlineCompletionItemProvider(
@@ -85,12 +119,18 @@ export function registerCompletionProvider(
           return [];
         }
 
-        if (NON_CODE_LANGUAGE_IDS.has(document.languageId)) {
+        if (excludedLanguageIds.has(document.languageId)) {
           return [];
         }
 
         const prompt = buildCompletionPrompt(document, position);
-        const completionText = await fetchCompletion(completionModelHandle, state, prompt, token);
+        const completionText = await fetchCompletion(
+          completionModelHandle,
+          state,
+          completionSystemPrompt,
+          prompt,
+          token,
+        );
         if (!completionText || token.isCancellationRequested) {
           return [];
         }

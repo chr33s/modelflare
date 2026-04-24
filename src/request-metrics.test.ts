@@ -17,6 +17,7 @@ suite("request-metrics", () => {
 
   test("records newest request first", () => {
     recordCloudflareRequestMetric({
+      accountId: "acct-a",
       recordedAt: 1,
       outcome: "success",
       requestKind: "completion",
@@ -28,6 +29,7 @@ suite("request-metrics", () => {
       totalDurationMs: 30,
     });
     recordCloudflareRequestMetric({
+      accountId: "acct-a",
       recordedAt: 2,
       outcome: "success",
       requestKind: "model",
@@ -47,6 +49,7 @@ suite("request-metrics", () => {
 
   test("returns defensive copies of usage data", () => {
     recordCloudflareRequestMetric({
+      accountId: "acct-a",
       recordedAt: 1,
       outcome: "success",
       requestKind: "model",
@@ -73,6 +76,7 @@ suite("request-metrics", () => {
 
   test("records error details for failed requests", () => {
     recordCloudflareRequestMetric({
+      accountId: "acct-a",
       recordedAt: 3,
       outcome: "error",
       requestKind: "completion",
@@ -95,6 +99,7 @@ suite("request-metrics", () => {
 
   test("summarizes recent request metrics by model", () => {
     recordCloudflareRequestMetric({
+      accountId: "acct-a",
       recordedAt: 1,
       outcome: "success",
       requestKind: "model",
@@ -107,6 +112,7 @@ suite("request-metrics", () => {
       timeToFirstTextMs: 8,
     });
     recordCloudflareRequestMetric({
+      accountId: "acct-a",
       recordedAt: 2,
       outcome: "error",
       requestKind: "completion",
@@ -120,6 +126,7 @@ suite("request-metrics", () => {
       errorMessage: "Service Unavailable",
     });
     recordCloudflareRequestMetric({
+      accountId: "acct-a",
       recordedAt: 3,
       outcome: "cancelled",
       requestKind: "model",
@@ -133,6 +140,7 @@ suite("request-metrics", () => {
 
     const summaries = summarizeCloudflareRequestMetrics(getRecentCloudflareRequestMetrics());
     assert.strictEqual(summaries.length, 2);
+    assert.strictEqual(summaries[0].accountId, "acct-a");
     assert.strictEqual(summaries[0].modelHandle, "@cf/a");
     assert.strictEqual(summaries[0].totalCount, 2);
     assert.strictEqual(summaries[0].successCount, 1);
@@ -144,6 +152,7 @@ suite("request-metrics", () => {
     assert.strictEqual(summaries[0].errorRate, 0);
     assert.strictEqual(summaries[0].latestFailure, undefined);
 
+    assert.strictEqual(summaries[1].accountId, "acct-a");
     assert.strictEqual(summaries[1].modelHandle, "@cf/b");
     assert.strictEqual(summaries[1].totalCount, 1);
     assert.strictEqual(summaries[1].successCount, 0);
@@ -155,5 +164,39 @@ suite("request-metrics", () => {
     assert.strictEqual(summaries[1].errorRate, 1);
     assert.strictEqual(summaries[1].latestFailure?.status, 503);
     assert.strictEqual(summaries[1].latestFailure?.message, "Service Unavailable");
+  });
+
+  test("keeps metrics for the same model handle separate by account", () => {
+    recordCloudflareRequestMetric({
+      accountId: "acct-a",
+      recordedAt: 1,
+      outcome: "success",
+      requestKind: "model",
+      modelHandle: "@cf/shared",
+      endpointKind: "direct",
+      deliveryMode: "buffered-json",
+      requestedStream: false,
+      gatewayFallbackToDirect: false,
+      totalDurationMs: 10,
+    });
+    recordCloudflareRequestMetric({
+      accountId: "acct-b",
+      recordedAt: 2,
+      outcome: "success",
+      requestKind: "model",
+      modelHandle: "@cf/shared",
+      endpointKind: "direct",
+      deliveryMode: "buffered-json",
+      requestedStream: false,
+      gatewayFallbackToDirect: false,
+      totalDurationMs: 20,
+    });
+
+    const summaries = summarizeCloudflareRequestMetrics(getRecentCloudflareRequestMetrics());
+    assert.strictEqual(summaries.length, 2);
+    assert.strictEqual(summaries[0].accountId, "acct-b");
+    assert.strictEqual(summaries[0].modelHandle, "@cf/shared");
+    assert.strictEqual(summaries[1].accountId, "acct-a");
+    assert.strictEqual(summaries[1].modelHandle, "@cf/shared");
   });
 });

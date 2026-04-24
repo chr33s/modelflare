@@ -99,6 +99,7 @@ suite("extension", () => {
   suite("formatRecordedRequestMetric", () => {
     test("includes transport, durations, fallback, and usage when present", () => {
       const metric: RecordedCloudflareRequestMetric = {
+        accountId: "acct-a",
         recordedAt: Date.UTC(2026, 3, 24, 12, 0, 0),
         outcome: "success",
         requestKind: "model",
@@ -118,6 +119,7 @@ suite("extension", () => {
 
       const formatted = formatRecordedRequestMetric(metric);
       assert.ok(formatted.includes("2026-04-24T12:00:00.000Z"), formatted);
+      assert.ok(formatted.includes("account=acct-a"), formatted);
       assert.ok(formatted.includes("model @cf/meta/llama"), formatted);
       assert.ok(formatted.includes("outcome=success"), formatted);
       assert.ok(formatted.includes("transport=direct/event-stream"), formatted);
@@ -130,6 +132,7 @@ suite("extension", () => {
 
     test("renders ttft as n/a when no first-text timing is available", () => {
       const metric: RecordedCloudflareRequestMetric = {
+        accountId: "acct-a",
         recordedAt: 0,
         outcome: "cancelled",
         requestKind: "completion",
@@ -151,6 +154,7 @@ suite("extension", () => {
 
     test("includes status and error details for failed requests", () => {
       const metric: RecordedCloudflareRequestMetric = {
+        accountId: "acct-a",
         recordedAt: 0,
         outcome: "error",
         requestKind: "completion",
@@ -179,6 +183,7 @@ suite("extension", () => {
   suite("formatRequestMetricSummary", () => {
     test("includes counts and latest failure details when present", () => {
       const summary: AggregatedCloudflareRequestMetric = {
+        accountId: "acct-a",
         modelHandle: "@cf/meta/llama",
         totalCount: 4,
         successCount: 2,
@@ -198,6 +203,7 @@ suite("extension", () => {
       };
 
       const formatted = formatRequestMetricSummary(summary);
+      assert.ok(formatted.includes("account=acct-a"), formatted);
       assert.ok(formatted.includes("@cf/meta/llama"), formatted);
       assert.ok(formatted.includes("total=4 success=2 error=1 cancelled=1"), formatted);
       assert.ok(formatted.includes("avgDuration=43ms"), formatted);
@@ -216,6 +222,7 @@ suite("extension", () => {
 
     test("shows latestFailure=none when a model has no recent errors", () => {
       const summary: AggregatedCloudflareRequestMetric = {
+        accountId: "acct-a",
         modelHandle: "@cf/success-only",
         totalCount: 3,
         successCount: 3,

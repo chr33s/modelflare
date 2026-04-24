@@ -23,6 +23,8 @@ export interface CloudflareModelPickerCategory {
   order: number;
 }
 
+type DetectedCloudflareModelCapabilities = NonNullable<CloudflareModel["detectedCapabilities"]>;
+
 interface CloudflareModelsResponse {
   success: boolean;
   result: CloudflareModel[];
@@ -41,6 +43,7 @@ const TEXT_GENERATION_TASK = "Text Generation";
 const SCHEMA_BATCH_SIZE = 5;
 const MODEL_SEARCH_PAGE_SIZE = 100;
 const MAX_MODEL_SEARCH_PAGES = 20;
+const MAX_NORMALIZED_TEXT_LENGTH = 4096;
 const TOOL_CALLING_INPUT_PROPERTIES = new Set([
   "tools",
   "tool_choice",
@@ -86,17 +89,6 @@ const FAMILY_SUFFIX_HINTS = new Set([
   "turbo",
   "vision",
 ]);
-const detectedCapabilitiesCache = new Map<
-  string,
-  {
-    toolCalling?: boolean;
-    imageInput?: boolean;
-    structuredOutput?: boolean;
-    reasoning?: boolean;
-    audioInput?: boolean;
-    audioOutput?: boolean;
-  }
->();
 
 export function getCloudflareModelHandle(model: Pick<CloudflareModel, "id" | "name">): string {
   const name = model.name?.trim();
@@ -107,9 +99,15 @@ export function getCloudflareModelHandle(model: Pick<CloudflareModel, "id" | "na
   return model.id;
 }
 
+function truncateNormalizedText(value: string): string {
+  return value.length > MAX_NORMALIZED_TEXT_LENGTH
+    ? value.slice(0, MAX_NORMALIZED_TEXT_LENGTH)
+    : value;
+}
+
 function normalizeTextValue(value: unknown): string {
   if (typeof value === "string") {
-    return value.toLowerCase();
+    return truncateNormalizedText(value.toLowerCase());
   }
 
   if (value === null || value === undefined) {
@@ -117,11 +115,11 @@ function normalizeTextValue(value: unknown): string {
   }
 
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return value.toString().toLowerCase();
+    return truncateNormalizedText(value.toString().toLowerCase());
   }
 
   try {
-    return JSON.stringify(value)?.toLowerCase() ?? "";
+    return truncateNormalizedText(JSON.stringify(value)?.toLowerCase() ?? "");
   } catch {
     return "";
   }
@@ -675,6 +673,7 @@ async function detectModelCapabilities(
   accountId: string,
   apiKey: string,
   modelHandle: string,
+  capabilityCache: Map<string, DetectedCloudflareModelCapabilities | undefined>,
 ): Promise<
   | {
       toolCalling?: boolean;
@@ -686,9 +685,8 @@ async function detectModelCapabilities(
     }
   | undefined
 > {
-  const cached = detectedCapabilitiesCache.get(modelHandle);
-  if (cached !== undefined) {
-    return cached;
+  if (capabilityCache.has(modelHandle)) {
+    return capabilityCache.get(modelHandle);
   }
 
   try {
@@ -704,9 +702,10 @@ async function detectModelCapabilities(
       audioInput: detectAudioInputSupport(inputSchema),
       audioOutput: detectAudioOutputSupport(inputSchema, outputSchema),
     };
-    detectedCapabilitiesCache.set(modelHandle, detectedCapabilities);
+    capabilityCache.set(modelHandle, detectedCapabilities);
     return detectedCapabilities;
   } catch {
+    capabilityCache.set(modelHandle, undefined);
     return undefined;
   }
 }
@@ -716,6 +715,7 @@ export async function enrichCloudflareModelsWithCapabilities(
   apiKey: string,
   models: CloudflareModel[],
 ): Promise<CloudflareModel[]> {
+  const capabilityCache = new Map<string, DetectedCloudflareModelCapabilities | undefined>();
   const enrichedModels = models.map((model) => ({
     ...model,
     detectedCapabilities: { ...model.detectedCapabilities },
@@ -734,6 +734,7 @@ export async function enrichCloudflareModelsWithCapabilities(
           accountId,
           apiKey,
           getCloudflareModelHandle(model),
+          capabilityCache,
         ),
       })),
     );

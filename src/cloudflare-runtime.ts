@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { base64ToBytes, bytesToBase64 } from "./byte-utils";
 import { recordCloudflareRequestMetric } from "./request-metrics";
 
 export interface CloudflareRequestState {
@@ -173,10 +174,6 @@ function encodeText(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-function nowMs(): number {
-  return Date.now();
-}
-
 class CloudflareRequestError extends Error {
   readonly status: number;
   readonly raw: string;
@@ -334,7 +331,7 @@ function emitStreamedText(
   }
 
   if (accumulator.timeToFirstTextMs === undefined) {
-    accumulator.timeToFirstTextMs = Math.max(0, nowMs() - accumulator.requestStartedAtMs);
+    accumulator.timeToFirstTextMs = Math.max(0, Date.now() - accumulator.requestStartedAtMs);
   }
 
   accumulator.parts.push({ type: "text", value: delta });
@@ -362,7 +359,7 @@ function withRequestDuration(
 
   return withResponseMetrics(response, {
     ...response.metrics,
-    totalDurationMs: Math.max(0, nowMs() - requestStartedAtMs),
+    totalDurationMs: Math.max(0, Date.now() - requestStartedAtMs),
   });
 }
 
@@ -389,7 +386,8 @@ function recordResponseMetrics(
   }
 
   recordCloudflareRequestMetric({
-    recordedAt: nowMs(),
+    accountId: options.state.accountId,
+    recordedAt: Date.now(),
     outcome: "success",
     requestKind: options.errorLabel,
     modelHandle: options.modelHandle,
@@ -419,7 +417,8 @@ function recordFailedResponseMetrics(
   error: unknown,
 ): void {
   recordCloudflareRequestMetric({
-    recordedAt: nowMs(),
+    accountId: options.state.accountId,
+    recordedAt: Date.now(),
     outcome: "error",
     requestKind: options.errorLabel,
     modelHandle: options.modelHandle,
@@ -427,7 +426,7 @@ function recordFailedResponseMetrics(
     deliveryMode: "unknown",
     requestedStream: options.stream === true,
     gatewayFallbackToDirect,
-    totalDurationMs: Math.max(0, nowMs() - requestStartedAtMs),
+    totalDurationMs: Math.max(0, Date.now() - requestStartedAtMs),
     errorStatus: error instanceof CloudflareRequestError ? error.status : undefined,
     errorMessage: getRecordedErrorMessage(error),
   });
@@ -440,7 +439,8 @@ function recordCancelledResponseMetrics(
   gatewayFallbackToDirect: boolean,
 ): void {
   recordCloudflareRequestMetric({
-    recordedAt: nowMs(),
+    accountId: options.state.accountId,
+    recordedAt: Date.now(),
     outcome: "cancelled",
     requestKind: options.errorLabel,
     modelHandle: options.modelHandle,
@@ -448,12 +448,12 @@ function recordCancelledResponseMetrics(
     deliveryMode: "unknown",
     requestedStream: options.stream === true,
     gatewayFallbackToDirect,
-    totalDurationMs: Math.max(0, nowMs() - requestStartedAtMs),
+    totalDurationMs: Math.max(0, Date.now() - requestStartedAtMs),
   });
 }
 
 function getDataPartSignature(part: CloudflareResponseDataPart): string {
-  return `${part.mimeType}:${Buffer.from(part.data).toString("base64")}`;
+  return `${part.mimeType}:${bytesToBase64(part.data)}`;
 }
 
 function getToolCallSignature(part: CloudflareResponseToolCallPart): string {
@@ -843,7 +843,7 @@ async function parseCloudflareEventStream(
       deliveryMode: "event-stream",
       requestedStream: options.stream === true,
       gatewayFallbackToDirect: false,
-      totalDurationMs: Math.max(0, nowMs() - requestStartedAtMs),
+      totalDurationMs: Math.max(0, Date.now() - requestStartedAtMs),
       timeToFirstTextMs: accumulator.timeToFirstTextMs,
     },
   );
@@ -855,7 +855,7 @@ function finalizeBufferedResponseMetrics(
   endpointKind: CloudflareEndpointKind,
   requestStartedAtMs: number,
 ): CloudflareChatResponse {
-  const totalDurationMs = Math.max(0, nowMs() - requestStartedAtMs);
+  const totalDurationMs = Math.max(0, Date.now() - requestStartedAtMs);
 
   return withResponseMetrics(response, {
     endpointKind,
@@ -990,7 +990,7 @@ function toUint8Array(value: unknown, mimeType: string): Uint8Array | undefined 
       return encodeText(value);
     }
 
-    return Uint8Array.from(Buffer.from(value, "base64"));
+    return base64ToBytes(value);
   }
 
   if (Array.isArray(value) && value.every((item) => typeof item === "number")) {
@@ -1324,7 +1324,7 @@ async function requestCloudflareEndpoint(
   target: CloudflareEndpointTarget,
   signal: AbortSignal,
 ): Promise<CloudflareChatResponse> {
-  const requestStartedAtMs = nowMs();
+  const requestStartedAtMs = Date.now();
   const body: Record<string, unknown> = {
     messages: options.messages,
   };
@@ -1370,7 +1370,7 @@ async function requestCloudflareEndpoint(
 export async function requestCloudflareChatResponse(
   options: RequestCloudflareChatTextOptions,
 ): Promise<CloudflareChatResponse | undefined> {
-  const requestStartedAtMs = nowMs();
+  const requestStartedAtMs = Date.now();
   let activeEndpointKind: CloudflareEndpointKind = options.state.gatewayId ? "gateway" : "direct";
   let gatewayFallbackToDirect = false;
 

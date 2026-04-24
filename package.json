@@ -65,6 +65,25 @@
           "type": "string",
           "default": "",
           "description": "Optional model handle, name, or id to use for inline completions. When unset, the extension picks a Text Generation model using completion-focused heuristics."
+        },
+        "cloudflareCopilot.completionSystemPrompt": {
+          "type": "string",
+          "default": "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
+          "description": "Optional system prompt override used for inline completion requests."
+        },
+        "cloudflareCopilot.completionExcludedLanguages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "plaintext",
+            "markdown",
+            "json",
+            "jsonc",
+            "log"
+          ],
+          "description": "Language IDs that should not receive inline completions."
         }
       }
     },

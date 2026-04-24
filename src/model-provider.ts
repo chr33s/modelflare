@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { bytesToBase64, utf8ByteLength } from "./byte-utils";
 import {
   CloudflareModel,
   getCloudflareModelFamily,
@@ -29,7 +30,10 @@ interface CloudflareLanguageModelChatInformation extends vscode.LanguageModelCha
   readonly category?: ModelPickerCategory;
 }
 
-interface ProviderModelInformation extends CloudflareLanguageModelChatInformation {}
+interface ProviderModelInformation extends CloudflareLanguageModelChatInformation {
+  readonly rawMaxInputTokens: number;
+  readonly reservedPromptTokens: number;
+}
 
 export interface RegisteredModelProvider
   extends vscode.Disposable, vscode.LanguageModelChatProvider<ProviderModelInformation> {
@@ -82,11 +86,6 @@ const OUTPUT_TOKEN_PROPERTY_HINTS = [
   "max_new_tokens",
   "completion token limit",
 ];
-
-interface ProviderModelInformation extends CloudflareLanguageModelChatInformation {
-  readonly rawMaxInputTokens: number;
-  readonly reservedPromptTokens: number;
-}
 
 interface ResolvedModelTokenLimits {
   readonly rawMaxInputTokens: number;
@@ -157,7 +156,7 @@ function stringifyDataPartLike(value: unknown): string | undefined {
 }
 
 function dataPartToBase64(part: vscode.LanguageModelDataPart): string {
-  return Buffer.from(part.data).toString("base64");
+  return bytesToBase64(part.data);
 }
 
 function serializeValue(value: unknown): string {
@@ -290,7 +289,7 @@ function estimateTextTokens(value: string): number {
     return 0;
   }
 
-  const byteCount = Buffer.byteLength(normalized, "utf8");
+  const byteCount = utf8ByteLength(normalized);
   const wordCount = normalized.split(/\s+/u).length;
   const punctuationCount = (normalized.match(/[^\w\s]/g) ?? []).length;
   return Math.max(1, Math.ceil(byteCount / 4), wordCount + Math.ceil(punctuationCount / 4));

@@ -8,6 +8,7 @@ export type RecordedCloudflareRequestOutcome = "success" | "error" | "cancelled"
 export type RecordedCloudflareDeliveryMode = "event-stream" | "buffered-json" | "unknown";
 
 export interface RecordedCloudflareRequestMetric {
+  accountId: string;
   recordedAt: number;
   outcome: RecordedCloudflareRequestOutcome;
   requestKind: string;
@@ -31,6 +32,7 @@ export interface AggregatedCloudflareRequestFailure {
 }
 
 export interface AggregatedCloudflareRequestMetric {
+  accountId: string;
   modelHandle: string;
   totalCount: number;
   successCount: number;
@@ -81,7 +83,9 @@ export function summarizeCloudflareRequestMetrics(
   const summaries = new Map<string, MutableAggregatedCloudflareRequestMetric>();
 
   for (const metric of metrics) {
-    const summary = summaries.get(metric.modelHandle) ?? {
+    const summaryKey = `${metric.accountId}\u0000${metric.modelHandle}`;
+    const summary = summaries.get(summaryKey) ?? {
+      accountId: metric.accountId,
       modelHandle: metric.modelHandle,
       totalCount: 0,
       successCount: 0,
@@ -121,16 +125,18 @@ export function summarizeCloudflareRequestMetrics(
       summary.cancelledCount += 1;
     }
 
-    summaries.set(metric.modelHandle, summary);
+    summaries.set(summaryKey, summary);
   }
 
   return [...summaries.values()]
     .sort(
       (left, right) =>
         right.latestRecordedAt - left.latestRecordedAt ||
+        left.accountId.localeCompare(right.accountId) ||
         left.modelHandle.localeCompare(right.modelHandle),
     )
     .map((summary) => ({
+      accountId: summary.accountId,
       modelHandle: summary.modelHandle,
       totalCount: summary.totalCount,
       successCount: summary.successCount,
