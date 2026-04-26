@@ -14,19 +14,20 @@
   "main": "./dist/extension.js",
   "scripts": {
     "build": "npm run package && code --install-extension ./cloudflare-copilot-models-${npm_package_version}.vsix",
-    "check": "oxfmt --check . && oxlint --type-aware --type-check .",
+    "check": "oxfmt --check . && oxlint --ignore-pattern=vscode*.d.ts --type-aware --type-check .",
     "compile": "tsc -p ./",
-    "fix": "oxfmt --write . && oxlint --fix --fix-suggestions --type-aware --type-check .",
+    "fix": "oxfmt --write . && oxlint --fix --fix-suggestions --ignore-pattern=vscode*.d.ts --type-aware --type-check .",
     "package": "vsce package",
     "pretest": "npm run compile",
     "test": "vscode-test",
+    "typegen": "npx @vscode/dts dev && npx @vscode/dts main",
     "vscode:prepublish": "npm run compile",
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.0.0",
-    "@types/vscode": "^1.99.0",
+    "@vscode/dts": "^0.4.1",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
