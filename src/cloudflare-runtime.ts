@@ -20,7 +20,18 @@ export interface CloudflareImageContentPart {
   };
 }
 
-export type CloudflareMessageContentPart = CloudflareTextContentPart | CloudflareImageContentPart;
+export interface CloudflareAudioContentPart {
+  type: "input_audio";
+  input_audio: {
+    data: string; // base64-encoded audio
+    format: "wav" | "mp3";
+  };
+}
+
+export type CloudflareMessageContentPart =
+  | CloudflareTextContentPart
+  | CloudflareImageContentPart
+  | CloudflareAudioContentPart;
 
 export interface CloudflareChatMessage {
   role: "user" | "assistant" | "system" | "tool";

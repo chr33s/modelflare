@@ -9,6 +9,7 @@ import {
   sortCloudflareModels,
 } from "./cloudflare-client";
 import {
+  CloudflareAudioContentPart,
   CloudflareChatMessage,
   CloudflareMessageContentPart,
   CloudflareRequestState,
@@ -98,8 +99,10 @@ function decodeText(data: Uint8Array): string {
 }
 
 export class UnsupportedDataFormatError extends Error {
-  constructor() {
-    super("Unsupported multimodal data format passed to Cloudflare model");
+  constructor(mimeType?: string) {
+    super(
+      `Unsupported multimodal data format passed to Cloudflare model: ${mimeType ?? "unknown"}`,
+    );
     this.name = "UnsupportedDataFormatError";
   }
 }
@@ -129,7 +132,7 @@ function toDataPartLike(value: unknown): { data: Uint8Array; mimeType: string } 
     return { data: Uint8Array.from(rawData), mimeType };
   }
 
-  throw new UnsupportedDataFormatError();
+  throw new UnsupportedDataFormatError(mimeType);
 }
 
 function stringifyDataPartLike(value: unknown): string | undefined {
@@ -138,6 +141,7 @@ function stringifyDataPartLike(value: unknown): string | undefined {
     dataPart = toDataPartLike(value);
   } catch (err) {
     if (err instanceof UnsupportedDataFormatError) {
+      console.warn(err.message);
       return undefined;
     }
     throw err;
@@ -159,6 +163,25 @@ function stringifyDataPartLike(value: unknown): string | undefined {
 
 function dataPartToBase64(part: vscode.LanguageModelDataPart): string {
   return bytesToBase64(part.data);
+}
+
+function toCloudflareAudioFormat(
+  mimeType: string,
+): CloudflareAudioContentPart["input_audio"]["format"] | undefined {
+  const normalizedMimeType = mimeType.split(";", 1)[0]?.trim().toLowerCase();
+
+  switch (normalizedMimeType) {
+    case "audio/wav":
+    case "audio/wave":
+    case "audio/x-wav":
+    case "audio/vnd.wave":
+      return "wav";
+    case "audio/mpeg":
+    case "audio/mp3":
+      return "mp3";
+    default:
+      return undefined;
+  }
 }
 
 function serializeValue(value: unknown): string {
@@ -447,6 +470,22 @@ function toCloudflareContentParts(
         },
       },
     ];
+  }
+
+  if (part.mimeType.startsWith("audio/")) {
+    const format = toCloudflareAudioFormat(part.mimeType);
+    if (!format) {
+      throw new UnsupportedDataFormatError(part.mimeType);
+    }
+
+    const audioPart: CloudflareAudioContentPart = {
+      type: "input_audio",
+      input_audio: {
+        data: dataPartToBase64(part),
+        format,
+      },
+    };
+    return [audioPart];
   }
 
   const value = stringifyDataPart(part);

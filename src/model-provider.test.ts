@@ -426,6 +426,28 @@ suite("model-provider", () => {
       assert.ok(msgs[0].content[0].image_url.url.startsWith("data:image/png;base64,"));
     });
 
+    test("maps supported audio data parts into Cloudflare input_audio content", () => {
+      const audioPart = new vscode.LanguageModelDataPart(Uint8Array.from([1, 2, 3]), "audio/mpeg");
+      const msgs = toCloudflareMessages([userMsg(audioPart)]);
+
+      assert.strictEqual(msgs.length, 1);
+      assert.strictEqual(msgs[0].role, "user");
+      assert.ok(Array.isArray(msgs[0].content));
+      if (!Array.isArray(msgs[0].content)) {
+        assert.fail("Expected structured content array");
+      }
+
+      assert.strictEqual(msgs[0].content[0].type, "input_audio");
+      assert.strictEqual(msgs[0].content[0].input_audio.format, "mp3");
+      assert.strictEqual(msgs[0].content[0].input_audio.data, "AQID");
+    });
+
+    test("rejects unsupported audio data parts", () => {
+      const audioPart = new vscode.LanguageModelDataPart(Uint8Array.from([1, 2, 3]), "audio/ogg");
+
+      assert.throws(() => toCloudflareMessages([userMsg(audioPart)]), /audio\/ogg/);
+    });
+
     test("serializes JSON data parts inside tool results", () => {
       const toolResult = new vscode.LanguageModelToolResultPart("call-json", [
         vscode.LanguageModelDataPart.json({ ok: true }),

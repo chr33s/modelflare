@@ -72,7 +72,16 @@ export function loadCloudflareRequestMetrics(context: vscode.ExtensionContext): 
 
 export function saveCloudflareRequestMetrics(context: vscode.ExtensionContext): void {
   try {
-    context.workspaceState.update(TELEMETRY_STATE_KEY, recordedRequestMetrics);
+    const updateResult = context.workspaceState.update(
+      TELEMETRY_STATE_KEY,
+      recordedRequestMetrics,
+    ) as Thenable<void> | void;
+
+    if (updateResult) {
+      void Promise.resolve(updateResult).catch((err: unknown) => {
+        console.error("Failed to save metrics telemetry", err);
+      });
+    }
   } catch (err) {
     console.error("Failed to save metrics telemetry", err);
   }
