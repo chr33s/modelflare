@@ -62,6 +62,11 @@ export interface CloudflareResponseTextPart {
   value: string;
 }
 
+export interface CloudflareResponseThinkingPart {
+  type: "thinking";
+  value: string;
+}
+
 export interface CloudflareResponseDataPart {
   type: "data";
   data: Uint8Array;
@@ -75,6 +80,7 @@ export interface CloudflareResponseToolCallPart {
 
 export type CloudflareResponsePart =
   | CloudflareResponseTextPart
+  | CloudflareResponseThinkingPart
   | CloudflareResponseDataPart
   | CloudflareResponseToolCallPart;
 
@@ -131,6 +137,7 @@ interface RequestCloudflareChatTextOptions {
   trimEnd?: boolean;
   stream?: boolean;
   onTextChunk?: (text: string) => void;
+  onThinkingChunk?: (text: string) => void;
 }
 
 interface CloudflareEndpointTarget {
@@ -141,6 +148,7 @@ interface CloudflareEndpointTarget {
 interface CloudflareStreamingAccumulator {
   parts: CloudflareResponsePart[];
   text: string;
+  thinkingText: string;
   usage?: CloudflareUsage;
   timeToFirstTextMs?: number;
   readonly requestStartedAtMs: number;
@@ -274,6 +282,7 @@ function createStreamingAccumulator(requestStartedAtMs: number): CloudflareStrea
   return {
     parts: [],
     text: "",
+    thinkingText: "",
     requestStartedAtMs,
     seenDataPartSignatures: new Set<string>(),
     seenToolCallSignatures: new Set<string>(),
@@ -337,6 +346,25 @@ function emitStreamedText(
   accumulator.parts.push({ type: "text", value: delta });
   accumulator.text += delta;
   options.onTextChunk?.(delta);
+}
+
+function emitStreamedThinking(
+  accumulator: CloudflareStreamingAccumulator,
+  candidateText: string | undefined,
+  options: RequestCloudflareChatTextOptions,
+): void {
+  if (!candidateText || candidateText.length === 0) {
+    return;
+  }
+
+  const delta = getStreamedTextDelta(accumulator.thinkingText, candidateText);
+  if (delta.length === 0) {
+    return;
+  }
+
+  accumulator.parts.push({ type: "thinking", value: delta });
+  accumulator.thinkingText += delta;
+  options.onThinkingChunk?.(delta);
 }
 
 function withResponseMetrics(
@@ -746,12 +774,13 @@ function processCloudflareStreamingPayload(
 
   const eventParts = extractCloudflareResponseParts(parsed, false);
   emitStreamedText(accumulator, joinResponseText(eventParts), options);
+  emitStreamedThinking(accumulator, joinResponseThinking(eventParts), options);
   for (const update of extractStreamingToolCallUpdates(parsed)) {
     applyStreamingToolCallUpdate(accumulator, update);
   }
 
   for (const part of eventParts) {
-    if (part.type === "text") {
+    if (part.type === "text" || part.type === "thinking") {
       continue;
     }
 
@@ -884,6 +913,14 @@ function markGatewayFallback(response: CloudflareChatResponse): CloudflareChatRe
 function joinResponseText(parts: readonly CloudflareResponsePart[]): string | undefined {
   const text = parts
     .filter((part): part is CloudflareResponseTextPart => part.type === "text")
+    .map((part) => part.value)
+    .join("");
+  return text.length > 0 ? text : undefined;
+}
+
+function joinResponseThinking(parts: readonly CloudflareResponsePart[]): string | undefined {
+  const text = parts
+    .filter((part): part is CloudflareResponseThinkingPart => part.type === "thinking")
     .map((part) => part.value)
     .join("");
   return text.length > 0 ? text : undefined;
@@ -1040,6 +1077,28 @@ function readJsonPayload(record: Record<string, unknown>): unknown {
   return undefined;
 }
 
+function readThinkingFieldText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.length > 0 ? value : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const joined = value.map((item) => readThinkingFieldText(item) ?? "").join("");
+    return joined.length > 0 ? joined : undefined;
+  }
+
+  const record = toRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const text =
+    (typeof record.text === "string" ? record.text : undefined) ??
+    (typeof record.value === "string" ? record.value : undefined) ??
+    (typeof record.content === "string" ? record.content : undefined);
+  return text && text.length > 0 ? text : undefined;
+}
+
 function toResponseParts(value: unknown): CloudflareResponsePart[] {
   if (typeof value === "string") {
     return value.length > 0 ? [{ type: "text", value }] : [];
@@ -1087,6 +1146,7 @@ function extractCloudflareResponseParts(
 ): CloudflareResponsePart[] {
   const parts: CloudflareResponsePart[] = [];
   const candidates: unknown[] = [parsed.result?.content, parsed.content];
+  const thinkingCandidates: unknown[] = [];
 
   const topLevelChoices = Array.isArray(parsed.choices) ? parsed.choices : [];
   const resultChoices = Array.isArray(parsed.result?.choices) ? parsed.result.choices : [];
@@ -1099,10 +1159,10 @@ function extractCloudflareResponseParts(
     candidates.push(choiceRecord.content);
     candidates.push(toRecord(choiceRecord.message)?.content);
     candidates.push(toRecord(choiceRecord.delta)?.content);
-    candidates.push(toRecord(choiceRecord.message)?.reasoning);
-    candidates.push(toRecord(choiceRecord.delta)?.reasoning);
-    candidates.push(toRecord(choiceRecord.message)?.thinking);
-    candidates.push(toRecord(choiceRecord.delta)?.thinking);
+    thinkingCandidates.push(toRecord(choiceRecord.message)?.reasoning);
+    thinkingCandidates.push(toRecord(choiceRecord.delta)?.reasoning);
+    thinkingCandidates.push(toRecord(choiceRecord.message)?.thinking);
+    thinkingCandidates.push(toRecord(choiceRecord.delta)?.thinking);
   }
 
   for (const candidate of candidates) {
@@ -1113,6 +1173,16 @@ function extractCloudflareResponseParts(
       } else {
         parts.push(part);
       }
+    }
+  }
+
+  for (const candidate of thinkingCandidates) {
+    const thinkingText = readThinkingFieldText(candidate);
+    if (thinkingText && thinkingText.length > 0) {
+      parts.push({
+        type: "thinking",
+        value: trimEnd ? thinkingText.trimEnd() : thinkingText,
+      });
     }
   }
 

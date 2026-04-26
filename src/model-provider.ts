@@ -464,6 +464,11 @@ function reportResponsePart(
     return;
   }
 
+  if (part.type === "thinking") {
+    reportThinkingPart(progress, part.value);
+    return;
+  }
+
   if (part.type === "data") {
     progress.report(new vscode.LanguageModelDataPart(part.data, part.mimeType));
     return;
@@ -476,6 +481,24 @@ function reportResponsePart(
       part.toolCall.input,
     ),
   );
+}
+
+function reportThinkingPart(
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  value: string,
+): void {
+  if (value.length === 0) {
+    return;
+  }
+
+  const ThinkingPartCtor = (
+    vscode as { LanguageModelThinkingPart?: new (value: string) => unknown }
+  ).LanguageModelThinkingPart;
+  if (!ThinkingPartCtor) {
+    return;
+  }
+
+  progress.report(new ThinkingPartCtor(value) as vscode.LanguageModelResponsePart);
 }
 
 function mapRole(role: vscode.LanguageModelChatMessageRole): CloudflareChatMessage["role"] {
@@ -917,6 +940,9 @@ class CloudflareModelProvider
           progress.report(new vscode.LanguageModelTextPart(text));
         }
       },
+      onThinkingChunk: (text: string) => {
+        reportThinkingPart(progress, text);
+      },
     });
 
     if (token.isCancellationRequested) {
@@ -928,7 +954,7 @@ class CloudflareModelProvider
     }
 
     for (const part of response.parts) {
-      if (part.type === "text") {
+      if (part.type === "text" || part.type === "thinking") {
         continue;
       }
 

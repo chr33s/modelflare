@@ -747,6 +747,32 @@ suite("cloudflare-runtime", () => {
       assert.strictEqual(new TextDecoder().decode(resp.parts[0].data), "hidden chain of thought");
     });
 
+    test("routes choice-level reasoning fields to thinking parts, not text", async () => {
+      const resp = await getResponse({
+        choices: [
+          {
+            message: {
+              content: "Hello!",
+              reasoning: "I should greet the user.",
+            },
+          },
+        ],
+      });
+
+      assert.ok(resp);
+      const textParts = resp!.parts.filter((part) => part.type === "text");
+      const thinkingParts = resp!.parts.filter((part) => part.type === "thinking");
+      assert.deepStrictEqual(
+        textParts.map((part) => (part.type === "text" ? part.value : "")),
+        ["Hello!"],
+      );
+      assert.deepStrictEqual(
+        thinkingParts.map((part) => (part.type === "thinking" ? part.value : "")),
+        ["I should greet the user."],
+      );
+      assert.strictEqual(resp!.text, "Hello!");
+    });
+
     test("extracts usage metadata when present", async () => {
       const resp = await getResponse({
         result: {
@@ -826,6 +852,39 @@ suite("cloudflare-runtime", () => {
       assert.strictEqual(recorded[0].deliveryMode, "event-stream");
       assert.strictEqual(recorded[0].requestedStream, true);
       assert.strictEqual(recorded[0].usage?.totalTokens, 3);
+    });
+
+    test("routes streamed reasoning deltas to onThinkingChunk and thinking parts", async () => {
+      const textChunks: string[] = [];
+      const thinkingChunks: string[] = [];
+
+      mockFetch(async () =>
+        makeSseResponse([
+          JSON.stringify({ choices: [{ delta: { reasoning: "Let me think." } }] }),
+          JSON.stringify({ choices: [{ delta: { reasoning: " Almost done." } }] }),
+          JSON.stringify({ choices: [{ delta: { content: "Hello!" } }] }),
+        ]),
+      );
+
+      const response = await requestCloudflareChatResponse(mockContext, {
+        modelHandle: "@cf/model",
+        state: DIRECT_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+        stream: true,
+        onTextChunk: (text) => textChunks.push(text),
+        onThinkingChunk: (text) => thinkingChunks.push(text),
+      });
+
+      assert.deepStrictEqual(textChunks, ["Hello!"]);
+      assert.deepStrictEqual(thinkingChunks, ["Let me think.", " Almost done."]);
+      assert.strictEqual(response?.text, "Hello!");
+      const thinkingParts = response!.parts.filter((part) => part.type === "thinking");
+      assert.deepStrictEqual(
+        thinkingParts.map((part) => (part.type === "thinking" ? part.value : "")),
+        ["Let me think.", " Almost done."],
+      );
     });
 
     test("emits a text chunk callback for non-streaming JSON responses when requested", async () => {
