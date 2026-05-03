@@ -1,13 +1,17 @@
 {
   "inputs": [],
   "servers": {
+    "cloudflare-ai-gateway": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://ai-gateway.mcp.cloudflare.com/mcp"]
+    },
     "cloudflare-api": {
       "type": "http",
       "url": "https://mcp.cloudflare.com/mcp"
     },
     "cloudflare-docs": {
-      "type": "http",
-      "url": "https://docs.mcp.cloudflare.com/mcp"
+      "command": "npx",
+      "args": ["mcp-remote", "https://docs.mcp.cloudflare.com/mcp"]
     }
   }
 }
