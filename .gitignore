@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .vscode-test/
+.vscode-test-web/
+.vscode-insiders/*
+!.vscode-insiders/argv.json
 *.vsix
 .env*

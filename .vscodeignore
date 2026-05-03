@@ -1,5 +1,7 @@
 .vscode/**
+.vscode-insiders/**
 .vscode-test/**
+.vscode-test-web/**
 .vscode-test.mjs
 src/**
 .gitignore
@@ -7,5 +9,8 @@ tsconfig.json
 **/*.map
 **/*.ts
 dist/*.test.js
+dist/web/test/**
 node_modules/**
 .env*
+esbuild.web.mts
+run-web-tests.mts

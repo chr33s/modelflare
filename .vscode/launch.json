@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch VS Code Insiders (proposed API)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run build:insiders"
+    }
+  ]
+}

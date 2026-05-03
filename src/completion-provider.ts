@@ -120,7 +120,9 @@ export function registerCompletionProvider(
   const state: CloudflareRequestState = { accountId, apiKey, gatewayId };
 
   return vscode.languages.registerInlineCompletionItemProvider(
-    { scheme: "file" },
+    // Web-backed workspaces often use non-file URI schemes, so register broadly
+    // and rely on the language filter below to skip unsupported documents.
+    { scheme: "*" },
     {
       async provideInlineCompletionItems(document, position, _context, token) {
         if (token.isCancellationRequested || position.line < 0) {

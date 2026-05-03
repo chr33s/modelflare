@@ -1,7 +1,7 @@
 {
   "name": "cloudflare-copilot-models",
   "displayName": "Cloudflare Models for Copilot",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Automatically surfaces all Cloudflare Workers AI models in VS Code Copilot Chat",
   "categories": [
     "AI",
@@ -12,17 +12,25 @@
   },
   "publisher": "chr33s",
   "main": "./dist/extension.js",
+  "browser": "./dist/extension.js",
   "scripts": {
     "build": "npm run package && code --install-extension ./cloudflare-copilot-models-${npm_package_version}.vsix",
+    "build:insiders": "npm run package && node ./.vscode/launch-insiders.mjs --install-vsix",
     "check": "oxfmt --check . && oxlint --ignore-pattern=vscode*.d.ts --type-aware --type-check .",
-    "compile": "tsc -p ./",
+    "compile": "npm run compile:ts && npm run compile-web",
+    "compile:ts": "tsc -p ./",
+    "compile-web": "node ./esbuild.web.mts",
     "fix": "oxfmt --write . && oxlint --fix --fix-suggestions --ignore-pattern=vscode*.d.ts --type-aware --type-check .",
     "package": "vsce package",
+    "package-web": "node ./esbuild.web.mts --production",
     "pretest": "npm run compile",
     "test": "vscode-test",
+    "pretest-web": "npm run compile",
+    "test-web": "node ./run-web-tests.mts",
     "typegen": "npx @vscode/dts dev && npx @vscode/dts main",
-    "vscode:prepublish": "npm run compile",
-    "watch": "tsc -watch -p ./"
+    "vscode:prepublish": "npm run compile && npm run package-web",
+    "watch": "tsc -watch -p ./",
+    "watch-web": "node ./esbuild.web.mts --watch"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -30,10 +38,12 @@
     "@vscode/dts": "^0.4.1",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/test-web": "^0.0.80",
     "@vscode/vsce": "^3.9.1",
-    "oxfmt": "^0.46.0",
-    "oxlint": "^1.61.0",
-    "oxlint-tsgolint": "^0.21.1",
+    "esbuild": "^0.28.0",
+    "oxfmt": "^0.47.0",
+    "oxlint": "^1.62.0",
+    "oxlint-tsgolint": "^0.22.1",
     "typescript": "^6.0.0"
   },
   "contributes": {
@@ -119,9 +129,7 @@
     "onStartupFinished"
   ],
   "engines": {
+    "node": ">=22.18.0",
     "vscode": "^1.99.0"
-  },
-  "enabledApiProposals": [
-    "languageModelThinkingPart"
-  ]
+  }
 }
