@@ -61,7 +61,74 @@
         },
         "cloudflareCopilot.gatewayId": {
           "type": "string",
-          "description": "Your Cloudflare AI Gateway ID (optional). When set, all model requests are routed through the gateway for analytics, caching, and rate limiting."
+          "description": "Your Cloudflare AI Gateway ID (optional). When set, compat requests use this gateway instead of the default gateway."
+        },
+        "cloudflareCopilot.includeGatewaySupportedModels": {
+          "type": "boolean",
+          "default": true,
+          "description": "Discover provider-prefixed AI Gateway models from Cloudflare's supported-model catalog and surface them in the Copilot picker."
+        },
+        "cloudflareCopilot.gatewaySupportedModelProviders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Optional provider allowlist for AI Gateway discovery. Use provider IDs like openai, anthropic, or google-ai-studio. Leave empty to include all supported providers."
+        },
+        "cloudflareCopilot.manualModels": {
+          "type": "array",
+          "default": [],
+          "description": "Optional explicit model registrations. Use full handles like @cf/meta/llama-3.3-70b-instruct-fp8-fast or openai/gpt-5-mini.",
+          "items": {
+            "type": "object",
+            "required": [
+              "model"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string",
+                "description": "Full model handle."
+              },
+              "name": {
+                "type": "string",
+                "description": "Optional display name override."
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional picker tooltip text."
+              },
+              "task": {
+                "type": "string",
+                "description": "Optional task label. Defaults to a handle-based heuristic."
+              },
+              "capabilities": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "toolCalling": {
+                    "type": "boolean"
+                  },
+                  "imageInput": {
+                    "type": "boolean"
+                  },
+                  "structuredOutput": {
+                    "type": "boolean"
+                  },
+                  "reasoning": {
+                    "type": "boolean"
+                  },
+                  "audioInput": {
+                    "type": "boolean"
+                  },
+                  "audioOutput": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
         },
         "cloudflareCopilot.modelFilter": {
           "type": "string",

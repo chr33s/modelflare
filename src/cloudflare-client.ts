@@ -2,6 +2,12 @@ export interface CloudflareModel {
   id: string; // Cloudflare internal model UUID
   name?: string;
   description?: string;
+  source?: CloudflareModelSource;
+  transport?: CloudflareModelTransport;
+  provider?: {
+    id: string;
+    name?: string;
+  };
   task?: {
     id: string;
     name?: string; // e.g. "Text Generation"
@@ -23,7 +29,18 @@ export interface CloudflareModelPickerCategory {
   order: number;
 }
 
+export type CloudflareModelSource = "workers-ai" | "ai-gateway" | "manual";
+export type CloudflareModelTransport = "direct" | "compat";
+
 type DetectedCloudflareModelCapabilities = NonNullable<CloudflareModel["detectedCapabilities"]>;
+
+export interface ManualCloudflareModelConfig {
+  model: string;
+  name?: string;
+  description?: string;
+  task?: string;
+  capabilities?: Partial<DetectedCloudflareModelCapabilities>;
+}
 
 interface CloudflareModelsResponse {
   success: boolean;
@@ -40,6 +57,8 @@ interface CloudflareModelsResponse {
 
 const ALL_MODELS_FILTER = "all";
 const TEXT_GENERATION_TASK = "Text Generation";
+const AI_GATEWAY_SUPPORTED_MODELS_URL =
+  "https://developers.cloudflare.com/ai-gateway/supported-models/index.md";
 const SCHEMA_BATCH_SIZE = 5;
 const MODEL_SEARCH_PAGE_SIZE = 100;
 const MAX_MODEL_SEARCH_PAGES = 20;
@@ -89,6 +108,111 @@ const FAMILY_SUFFIX_HINTS = new Set([
   "turbo",
   "vision",
 ]);
+const DISPLAY_LABEL_OVERRIDES = new Map<string, string>([
+  ["ai", "AI"],
+  ["anthropic", "Anthropic"],
+  ["google-ai-studio", "Google AI Studio"],
+  ["grok", "Grok"],
+  ["openai", "OpenAI"],
+  ["openrouter", "OpenRouter"],
+  ["workers-ai", "Workers AI"],
+  ["xai", "xAI"],
+]);
+const GATEWAY_TEXT_EMBEDDING_HINTS = ["embed", "embedding"];
+const GATEWAY_AUDIO_INPUT_HINTS = ["transcribe", "whisper", "speech-to-text", "asr"];
+const GATEWAY_AUDIO_OUTPUT_HINTS = ["tts", "text-to-speech", "speech-"];
+const GATEWAY_IMAGE_HINTS = [
+  "image",
+  "imagen",
+  "recraft",
+  "flux",
+  "stable-diffusion",
+  "nano-banana",
+  "seedream",
+  "ideogram",
+];
+const GATEWAY_VIDEO_HINTS = [
+  "video",
+  "veo",
+  "hailuo",
+  "pixverse",
+  "vidu",
+  "minimax-video",
+  "seedance",
+];
+const GATEWAY_MUSIC_HINTS = ["music"];
+const GATEWAY_REASONING_HINTS = [
+  "reason",
+  "thinking",
+  "o1",
+  "o3",
+  "o4",
+  "gpt-5",
+  "claude",
+  "gemini-2.5",
+  "grok-4",
+  "r1",
+  "opus",
+];
+const GATEWAY_VISION_HINTS = [
+  "vision",
+  "multimodal",
+  "gpt-4o",
+  "gpt-5",
+  "claude",
+  "gemini",
+  "grok",
+  "pixtral",
+  "qwen-vl",
+  "llama-4",
+];
+
+function inferModelProviderFromHandle(
+  modelHandle: string,
+): CloudflareModel["provider"] | undefined {
+  const trimmedHandle = modelHandle.trim();
+  const segments = trimmedHandle.split("/").filter((segment) => segment.length > 0);
+
+  if (trimmedHandle.startsWith("@") && segments.length >= 3) {
+    const providerId = segments[1]?.toLowerCase();
+    if (!providerId) {
+      return undefined;
+    }
+
+    return {
+      id: providerId,
+      name: DISPLAY_LABEL_OVERRIDES.get(providerId) ?? toDisplayLabel(providerId),
+    };
+  }
+
+  if (!trimmedHandle.startsWith("@") && segments.length >= 2) {
+    const providerId = segments[0]?.toLowerCase();
+    if (!providerId) {
+      return undefined;
+    }
+
+    return {
+      id: providerId,
+      name: DISPLAY_LABEL_OVERRIDES.get(providerId) ?? toDisplayLabel(providerId),
+    };
+  }
+
+  return undefined;
+}
+
+export function isCloudflareCompatModelHandle(modelHandle: string): boolean {
+  const normalizedHandle = modelHandle.trim();
+  return normalizedHandle.includes("/") && !normalizedHandle.startsWith("@");
+}
+
+export function toCloudflareCompatModelHandle(modelHandle: string): string {
+  const normalizedHandle = modelHandle.trim();
+  if (normalizedHandle.startsWith("@")) {
+    return `workers-ai/${normalizedHandle}`;
+  }
+
+  return normalizedHandle;
+}
 
 export function getCloudflareModelHandle(model: Pick<CloudflareModel, "id" | "name">): string {
   const name = model.name?.trim();
@@ -97,6 +221,282 @@ export function getCloudflareModelHandle(model: Pick<CloudflareModel, "id" | "na
   }
 
   return model.id;
+}
+
+function toTaskId(taskName: string): string {
+  return taskName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-|-$/gu, "");
+}
+
+function getHandleLeaf(modelHandle: string): string {
+  const segments = modelHandle.split("/").filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? modelHandle;
+}
+
+function hasGatewayHint(value: string, hints: readonly string[]): boolean {
+  return hints.some((hint) => value.includes(hint));
+}
+
+function inferAiGatewayTaskName(modelId: string): string {
+  const normalizedModelId = modelId.trim().toLowerCase();
+
+  if (hasGatewayHint(normalizedModelId, GATEWAY_TEXT_EMBEDDING_HINTS)) {
+    return "Text Embeddings";
+  }
+
+  if (hasGatewayHint(normalizedModelId, GATEWAY_AUDIO_INPUT_HINTS)) {
+    return "Automatic Speech Recognition";
+  }
+
+  if (hasGatewayHint(normalizedModelId, GATEWAY_AUDIO_OUTPUT_HINTS)) {
+    return "Text-to-Speech";
+  }
+
+  if (hasGatewayHint(normalizedModelId, GATEWAY_VIDEO_HINTS)) {
+    return "Text-to-Video";
+  }
+
+  if (hasGatewayHint(normalizedModelId, GATEWAY_IMAGE_HINTS)) {
+    return "Text-to-Image";
+  }
+
+  if (hasGatewayHint(normalizedModelId, GATEWAY_MUSIC_HINTS)) {
+    return "Music Generation";
+  }
+
+  return TEXT_GENERATION_TASK;
+}
+
+function inferCompatModelCapabilities(
+  modelHandle: string,
+  taskName: string,
+): DetectedCloudflareModelCapabilities | undefined {
+  if (taskName !== TEXT_GENERATION_TASK) {
+    return undefined;
+  }
+
+  const normalizedHandle = modelHandle.toLowerCase();
+  const capabilities: DetectedCloudflareModelCapabilities = {
+    toolCalling: true,
+    structuredOutput: true,
+  };
+
+  if (hasGatewayHint(normalizedHandle, GATEWAY_REASONING_HINTS)) {
+    capabilities.reasoning = true;
+  }
+
+  if (hasGatewayHint(normalizedHandle, GATEWAY_VISION_HINTS)) {
+    capabilities.imageInput = true;
+  }
+
+  return capabilities;
+}
+
+function toNormalizedWorkersAiModel(model: CloudflareModel): CloudflareModel {
+  const modelHandle = getCloudflareModelHandle(model);
+
+  return {
+    ...model,
+    source: model.source ?? "workers-ai",
+    transport: model.transport ?? "direct",
+    provider: model.provider ?? inferModelProviderFromHandle(modelHandle),
+  };
+}
+
+function buildAiGatewayModel(
+  providerId: string,
+  providerLabel: string,
+  modelId: string,
+): CloudflareModel {
+  const taskName = inferAiGatewayTaskName(modelId);
+  const modelHandle = `${providerId}/${modelId}`;
+
+  return {
+    id: modelHandle,
+    name: modelId,
+    description: `AI Gateway supported model from ${providerLabel}`,
+    source: "ai-gateway",
+    transport: "compat",
+    provider: {
+      id: providerId,
+      name: providerLabel,
+    },
+    task: {
+      id: toTaskId(taskName),
+      name: taskName,
+    },
+    detectedCapabilities: inferCompatModelCapabilities(modelHandle, taskName),
+  };
+}
+
+function getSupportedModelProviderId(providerUrl: string): string | undefined {
+  try {
+    const absoluteUrl = new URL(providerUrl, AI_GATEWAY_SUPPORTED_MODELS_URL);
+    const pathSegments = absoluteUrl.pathname.split("/").filter((segment) => segment.length > 0);
+    const providersIndex = pathSegments.findIndex((segment) => segment === "providers");
+    const providerId = providersIndex >= 0 ? pathSegments[providersIndex + 1] : undefined;
+    return providerId?.trim().toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+export async function fetchCloudflareAiGatewayModels(
+  filter: string = TEXT_GENERATION_TASK,
+  includedProviders: readonly string[] = [],
+): Promise<CloudflareModel[]> {
+  const response = await fetch(AI_GATEWAY_SUPPORTED_MODELS_URL, {
+    headers: {
+      "Content-Type": "text/markdown",
+    },
+  });
+  const raw = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `Cloudflare AI Gateway model catalog request failed (${response.status}): ${raw}`,
+    );
+  }
+
+  const providerFilter = new Set(
+    includedProviders.map((providerId) => providerId.trim().toLowerCase()).filter(Boolean),
+  );
+  const dedupedModels = new Map<string, CloudflareModel>();
+  const tableRowPattern =
+    /^\|\s*\[(?<providerLabel>[^\]]+)\]\((?<providerUrl>[^)]+)\)\s*\|\s*(?<modelId>[^|]+?)\s*\|$/gmu;
+
+  for (const match of raw.matchAll(tableRowPattern)) {
+    const providerLabel = match.groups?.providerLabel?.trim();
+    const providerUrl = match.groups?.providerUrl?.trim();
+    const modelId = match.groups?.modelId?.trim();
+
+    if (!providerLabel || !providerUrl || !modelId) {
+      continue;
+    }
+
+    const providerId = getSupportedModelProviderId(providerUrl);
+    if (!providerId) {
+      continue;
+    }
+
+    if (providerFilter.size > 0 && !providerFilter.has(providerId)) {
+      continue;
+    }
+
+    const model = buildAiGatewayModel(providerId, providerLabel, modelId);
+    if (filter !== ALL_MODELS_FILTER && model.task?.name !== filter) {
+      continue;
+    }
+
+    dedupedModels.set(getCloudflareModelHandle(model), model);
+  }
+
+  return [...dedupedModels.values()];
+}
+
+function normalizeManualModelHandle(modelHandle: string): string | undefined {
+  const normalizedHandle = modelHandle.trim();
+  if (normalizedHandle.length === 0) {
+    return undefined;
+  }
+
+  if (normalizedHandle.startsWith("workers-ai/@")) {
+    return normalizedHandle.slice("workers-ai/".length);
+  }
+
+  return normalizedHandle;
+}
+
+function readManualModelCapabilities(
+  value: unknown,
+): Partial<DetectedCloudflareModelCapabilities> | undefined {
+  const record = getObjectRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const capabilities: Partial<DetectedCloudflareModelCapabilities> = {};
+  for (const capabilityKey of [
+    "toolCalling",
+    "imageInput",
+    "structuredOutput",
+    "reasoning",
+    "audioInput",
+    "audioOutput",
+  ] as const) {
+    const capabilityValue = record[capabilityKey];
+    if (typeof capabilityValue === "boolean") {
+      capabilities[capabilityKey] = capabilityValue;
+    }
+  }
+
+  return Object.keys(capabilities).length > 0 ? capabilities : undefined;
+}
+
+export function parseManualCloudflareModels(entries: readonly unknown[] | undefined): {
+  models: CloudflareModel[];
+  warnings: string[];
+} {
+  const models: CloudflareModel[] = [];
+  const warnings: string[] = [];
+
+  for (const [index, entry] of (entries ?? []).entries()) {
+    const entryRecord = getObjectRecord(entry);
+    if (!entryRecord) {
+      warnings.push(`manualModels[${index}] must be an object.`);
+      continue;
+    }
+
+    const configuredModelHandle =
+      typeof entryRecord.model === "string" ? entryRecord.model : undefined;
+    const modelHandle = configuredModelHandle
+      ? normalizeManualModelHandle(configuredModelHandle)
+      : undefined;
+    if (!modelHandle) {
+      warnings.push(`manualModels[${index}].model must be a non-empty string.`);
+      continue;
+    }
+
+    const configuredTask =
+      typeof entryRecord.task === "string" && entryRecord.task.trim().length > 0
+        ? entryRecord.task.trim()
+        : undefined;
+    const taskName = configuredTask ?? inferAiGatewayTaskName(getHandleLeaf(modelHandle));
+    const inferredCapabilities = isCloudflareCompatModelHandle(modelHandle)
+      ? inferCompatModelCapabilities(modelHandle, taskName)
+      : undefined;
+    const explicitCapabilities = readManualModelCapabilities(entryRecord.capabilities);
+    const modelName =
+      typeof entryRecord.name === "string" && entryRecord.name.trim().length > 0
+        ? entryRecord.name.trim()
+        : getHandleLeaf(modelHandle);
+    const description =
+      typeof entryRecord.description === "string" && entryRecord.description.trim().length > 0
+        ? entryRecord.description.trim()
+        : undefined;
+
+    models.push({
+      id: modelHandle,
+      name: modelName,
+      description,
+      source: "manual",
+      transport: isCloudflareCompatModelHandle(modelHandle) ? "compat" : "direct",
+      provider: inferModelProviderFromHandle(modelHandle),
+      task: {
+        id: toTaskId(taskName),
+        name: taskName,
+      },
+      detectedCapabilities: {
+        ...inferredCapabilities,
+        ...explicitCapabilities,
+      },
+    });
+  }
+
+  return { models, warnings };
 }
 
 function truncateNormalizedText(value: string): string {
@@ -159,6 +559,11 @@ function getCloudflareModelSlug(model: CloudflareModel): string {
 }
 
 function getCloudflareModelAuthorSegment(model: CloudflareModel): string | undefined {
+  const explicitProviderId = model.provider?.id?.trim().toLowerCase();
+  if (explicitProviderId) {
+    return explicitProviderId;
+  }
+
   const handle = getCloudflareModelHandle(model);
   const segments = handle.split("/").filter((segment) => segment.length > 0);
 
@@ -166,14 +571,30 @@ function getCloudflareModelAuthorSegment(model: CloudflareModel): string | undef
     return segments[1]?.toLowerCase();
   }
 
+  if (!handle.startsWith("@") && segments.length >= 2) {
+    return segments[0]?.toLowerCase();
+  }
+
   return undefined;
 }
 
 function toDisplayLabel(value: string): string {
+  const normalizedValue = value.trim().toLowerCase();
+  const wholeValueOverride = DISPLAY_LABEL_OVERRIDES.get(normalizedValue);
+  if (wholeValueOverride) {
+    return wholeValueOverride;
+  }
+
   return value
     .split(/[-_]/u)
     .filter((segment) => segment.length > 0)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .map((segment) => {
+      const normalizedSegment = segment.toLowerCase();
+      return (
+        DISPLAY_LABEL_OVERRIDES.get(normalizedSegment) ??
+        segment.charAt(0).toUpperCase() + segment.slice(1)
+      );
+    })
     .join(" ");
 }
 
@@ -238,10 +659,15 @@ function findVersionCandidate(value: string): string | undefined {
     { regex: /\b(r\d+(?:\.\d+)*)\b/u },
     { regex: /\bv(\d+(?:\.\d+)*)\b/u, group: 1 },
     { regex: /\b(\d+(?:\.\d+)+)\b/u, group: 1 },
+    {
+      regex:
+        /(?:^|[-_])(\d+(?:-\d+)+)(?=[-_](?:flash|haiku|large|lite|mini|nano|opus|pro|small|sonnet|turbo|ultra)|$)/u,
+      group: 1,
+    },
     { regex: /[a-z]+(\d+(?:\.\d+)+)\b/u, group: 1 },
     {
       regex:
-        /(?:^|[-_])(\d+)(?=[-_](?:chat|coder|distill|fast|instruct|maverick|preview|reasoning|scout|turbo|vision)|$)/u,
+        /(?:^|[-_])(\d+)(?=[-_](?:chat|coder|distill|fast|flash|haiku|instruct|large|lite|maverick|mini|nano|opus|preview|pro|reasoning|scout|small|sonnet|turbo|vision)|$)/u,
       group: 1,
     },
   ];
@@ -250,7 +676,7 @@ function findVersionCandidate(value: string): string | undefined {
     const match = matcher.regex.exec(normalized);
     const candidate = matcher.group ? match?.[matcher.group] : match?.[0];
     if (candidate && candidate.length > 0) {
-      return candidate;
+      return candidate.includes("-") ? candidate.replace(/-/gu, ".") : candidate;
     }
   }
 
@@ -388,7 +814,8 @@ export function getCloudflareModelPickerCategory(
   model: CloudflareModel,
 ): CloudflareModelPickerCategory {
   const authorSegment = getCloudflareModelAuthorSegment(model);
-  const authorLabel = authorSegment ? toDisplayLabel(authorSegment) : "Cloudflare";
+  const authorLabel =
+    model.provider?.name?.trim() || (authorSegment ? toDisplayLabel(authorSegment) : "Cloudflare");
   const taskName = model.task?.name?.trim();
 
   if (taskName && taskName !== TEXT_GENERATION_TASK) {
@@ -718,7 +1145,11 @@ export async function enrichCloudflareModelsWithCapabilities(
 
   const candidateIndexes = enrichedModels
     .map((model, index) => ({ model, index }))
-    .filter(({ model }) => model.task?.name === TEXT_GENERATION_TASK);
+    .filter(
+      ({ model }) =>
+        model.task?.name === TEXT_GENERATION_TASK &&
+        !isCloudflareCompatModelHandle(getCloudflareModelHandle(model)),
+    );
 
   for (let index = 0; index < candidateIndexes.length; index += SCHEMA_BATCH_SIZE) {
     const batch = candidateIndexes.slice(index, index + SCHEMA_BATCH_SIZE);
@@ -795,7 +1226,8 @@ export async function fetchCloudflareModels(
       throw new Error(`Cloudflare API error: ${errMsg}`);
     }
 
-    for (const model of json.result) {
+    for (const rawModel of json.result) {
+      const model = toNormalizedWorkersAiModel(rawModel);
       const dedupeKey = getCloudflareModelHandle(model);
       if (!dedupedModels.has(dedupeKey)) {
         dedupedModels.set(dedupeKey, model);

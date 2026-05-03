@@ -46,6 +46,7 @@ export interface RegisteredModelProvider
     gatewayId?: string,
   ): void;
   getRegisteredModels(): readonly ProviderModelInformation[];
+  getRegisteredCatalog(): readonly CloudflareModel[];
 }
 
 const TOOL_CALLING_HINTS = ["function calling", "tool calling", "agent capabilities"];
@@ -916,6 +917,10 @@ class CloudflareModelProvider
 
   getRegisteredModels(): readonly ProviderModelInformation[] {
     return this.modelInfos;
+  }
+
+  getRegisteredCatalog(): readonly CloudflareModel[] {
+    return [...this.modelsById.values()];
   }
 
   provideLanguageModelChatInformation(

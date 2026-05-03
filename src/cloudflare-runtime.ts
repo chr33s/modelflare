@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { base64ToBytes, bytesToBase64 } from "./byte-utils";
+import { isCloudflareCompatModelHandle, toCloudflareCompatModelHandle } from "./cloudflare-client";
 import { recordCloudflareRequestMetric } from "./request-metrics";
 
 export interface CloudflareRequestState {
@@ -52,6 +53,7 @@ export interface CloudflareToolDefinition {
 export type CloudflareToolChoiceMode = "auto" | "required";
 export type CloudflareEndpointKind = "gateway" | "direct";
 export type CloudflareDeliveryMode = "event-stream" | "buffered-json";
+type CloudflareEndpointApi = "workers-ai" | "compat";
 
 export interface CloudflareToolCallPart {
   callId: string;
@@ -154,6 +156,7 @@ interface RequestCloudflareChatTextOptions {
 interface CloudflareEndpointTarget {
   kind: CloudflareEndpointKind;
   url: string;
+  api: CloudflareEndpointApi;
 }
 
 interface CloudflareStreamingAccumulator {
@@ -216,28 +219,76 @@ function isCloudflareRequestError(error: unknown): error is CloudflareRequestErr
   return error instanceof CloudflareRequestError;
 }
 
-function buildGatewayEndpoint(modelHandle: string, state: CloudflareRequestState): string {
-  return `https://gateway.ai.cloudflare.com/v1/${state.accountId}/${state.gatewayId}/workers-ai/${modelHandle}`;
+function isDirectWorkersAiHandle(modelHandle: string): boolean {
+  const normalizedHandle = modelHandle.trim();
+  return normalizedHandle.startsWith("@") || normalizedHandle.startsWith("workers-ai/@");
+}
+
+function toDirectWorkersAiHandle(modelHandle: string): string {
+  const normalizedHandle = modelHandle.trim();
+  if (normalizedHandle.startsWith("workers-ai/@")) {
+    return normalizedHandle.slice("workers-ai/".length);
+  }
+
+  return normalizedHandle;
+}
+
+function shouldUseCompatEndpoint(modelHandle: string, state: CloudflareRequestState): boolean {
+  return Boolean(state.gatewayId) || isCloudflareCompatModelHandle(modelHandle);
+}
+
+function buildGatewayEndpoint(state: CloudflareRequestState): string {
+  return `https://gateway.ai.cloudflare.com/v1/${state.accountId}/${state.gatewayId ?? "default"}/compat/chat/completions`;
 }
 
 function buildDirectEndpoint(modelHandle: string, state: CloudflareRequestState): string {
-  return `https://api.cloudflare.com/client/v4/accounts/${state.accountId}/ai/run/${modelHandle}`;
+  return `https://api.cloudflare.com/client/v4/accounts/${state.accountId}/ai/run/${toDirectWorkersAiHandle(modelHandle)}`;
+}
+
+function buildCloudflareEndpointTargets(
+  modelHandle: string,
+  state: CloudflareRequestState,
+): {
+  primaryTarget: CloudflareEndpointTarget;
+  fallbackTarget?: CloudflareEndpointTarget;
+} {
+  if (shouldUseCompatEndpoint(modelHandle, state)) {
+    return {
+      primaryTarget: {
+        kind: "gateway",
+        url: buildGatewayEndpoint(state),
+        api: "compat",
+      },
+      fallbackTarget:
+        state.gatewayId && isDirectWorkersAiHandle(modelHandle)
+          ? {
+              kind: "direct",
+              url: buildDirectEndpoint(modelHandle, state),
+              api: "workers-ai",
+            }
+          : undefined,
+    };
+  }
+
+  return {
+    primaryTarget: {
+      kind: "direct",
+      url: buildDirectEndpoint(modelHandle, state),
+      api: "workers-ai",
+    },
+  };
 }
 
 export function buildCloudflareEndpoint(
   modelHandle: string,
   state: CloudflareRequestState,
 ): string {
-  if (state.gatewayId) {
-    return buildGatewayEndpoint(modelHandle, state);
-  }
-
-  return buildDirectEndpoint(modelHandle, state);
+  return buildCloudflareEndpointTargets(modelHandle, state).primaryTarget.url;
 }
 
 function buildCloudflareHeaders(
   state: CloudflareRequestState,
-  endpointKind: CloudflareEndpointKind,
+  target: CloudflareEndpointTarget,
 ): Record<string, string> {
   const bearerToken = `Bearer ${state.apiKey}`;
   const headers: Record<string, string> = {
@@ -245,7 +296,7 @@ function buildCloudflareHeaders(
     "Content-Type": "application/json",
   };
 
-  if (endpointKind === "gateway") {
+  if (target.kind === "gateway" && target.api === "workers-ai") {
     // AI Gateway accepts this header for upstream Workers AI auth.
     headers["cf-aig-authorization"] = bearerToken;
   }
@@ -1413,6 +1464,10 @@ async function requestCloudflareEndpoint(
     messages: options.messages,
   };
 
+  if (target.api === "compat") {
+    body.model = toCloudflareCompatModelHandle(options.modelHandle);
+  }
+
   if (options.tools && options.tools.length > 0) {
     body.tools = options.tools;
     body.tool_choice = options.toolChoice ?? "auto";
@@ -1430,7 +1485,7 @@ async function requestCloudflareEndpoint(
   while (true) {
     response = await fetch(target.url, {
       method: "POST",
-      headers: buildCloudflareHeaders(options.state, target.kind),
+      headers: buildCloudflareHeaders(options.state, target),
       body: JSON.stringify(body),
       signal,
     });
@@ -1491,7 +1546,11 @@ export async function requestCloudflareChatResponse(
   options: RequestCloudflareChatTextOptions,
 ): Promise<CloudflareChatResponse | undefined> {
   const requestStartedAtMs = Date.now();
-  let activeEndpointKind: CloudflareEndpointKind = options.state.gatewayId ? "gateway" : "direct";
+  const { primaryTarget, fallbackTarget } = buildCloudflareEndpointTargets(
+    options.modelHandle,
+    options.state,
+  );
+  let activeEndpointKind: CloudflareEndpointKind = primaryTarget.kind;
   let gatewayFallbackToDirect = false;
 
   if (options.token.isCancellationRequested) {
@@ -1505,43 +1564,35 @@ export async function requestCloudflareChatResponse(
     return undefined;
   }
 
-  const endpoint = buildCloudflareEndpoint(options.modelHandle, options.state);
   const abortController = new AbortController();
   const cancellationDisposable = options.token.onCancellationRequested(() =>
     abortController.abort(),
   );
 
   try {
-    const directTarget: CloudflareEndpointTarget = {
-      kind: "direct",
-      url: buildDirectEndpoint(options.modelHandle, options.state),
-    };
-
-    if (!options.state.gatewayId) {
+    if (primaryTarget.kind === "direct") {
       activeEndpointKind = "direct";
       return recordResponseMetrics(
         context,
-        await requestCloudflareEndpoint(options, directTarget, abortController.signal),
+        await requestCloudflareEndpoint(options, primaryTarget, abortController.signal),
         options,
         requestStartedAtMs,
       );
     }
 
-    const gatewayTarget: CloudflareEndpointTarget = {
-      kind: "gateway",
-      url: endpoint,
-    };
-
     try {
       activeEndpointKind = "gateway";
       return recordResponseMetrics(
         context,
-        await requestCloudflareEndpoint(options, gatewayTarget, abortController.signal),
+        await requestCloudflareEndpoint(options, primaryTarget, abortController.signal),
         options,
         requestStartedAtMs,
       );
     } catch (gatewayError) {
-      if (!(isCloudflareRequestError(gatewayError) && gatewayError.status === 401)) {
+      if (
+        !(isCloudflareRequestError(gatewayError) && gatewayError.status === 401) ||
+        !fallbackTarget
+      ) {
         throw gatewayError;
       }
 
@@ -1550,7 +1601,7 @@ export async function requestCloudflareChatResponse(
         gatewayFallbackToDirect = true;
         const directResponse = await requestCloudflareEndpoint(
           options,
-          directTarget,
+          fallbackTarget,
           abortController.signal,
         );
         return recordResponseMetrics(

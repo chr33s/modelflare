@@ -2,13 +2,16 @@ import * as vscode from "vscode";
 import type { CloudflareModel } from "./cloudflare-client";
 
 const MODEL_CACHE_STATE_KEY = "cloudflareCopilot.modelCache";
-const MODEL_CACHE_VERSION = 1;
+const MODEL_CACHE_VERSION = 2;
 const MAX_CACHED_MODEL_SETS = 6;
 
 export interface CloudflareModelCacheQuery {
   accountId: string;
   apiKey: string;
   modelFilter: string;
+  includeGatewaySupportedModels?: boolean;
+  gatewaySupportedModelProviders?: readonly string[];
+  manualModels?: readonly unknown[];
   capabilityOverrides?: Record<string, unknown>;
 }
 
@@ -22,6 +25,8 @@ interface StoredCloudflareModelCacheEntry extends CachedCloudflareModels {
   accountId: string;
   modelFilter: string;
   apiKeyFingerprint: string;
+  gatewayCatalogDigest: string;
+  manualModelsDigest: string;
   capabilityOverridesDigest: string;
 }
 
@@ -94,6 +99,8 @@ function isStoredCloudflareModelCacheEntry(
     typeof entry.accountId === "string" &&
     typeof entry.modelFilter === "string" &&
     typeof entry.apiKeyFingerprint === "string" &&
+    typeof entry.gatewayCatalogDigest === "string" &&
+    typeof entry.manualModelsDigest === "string" &&
     typeof entry.capabilityOverridesDigest === "string" &&
     typeof entry.cachedAt === "number" &&
     Array.isArray(entry.models)
@@ -155,11 +162,22 @@ function getCloudflareModelCacheLookup(query: CloudflareModelCacheQuery): {
   accountId: string;
   modelFilter: string;
   apiKeyFingerprint: string;
+  gatewayCatalogDigest: string;
+  manualModelsDigest: string;
   capabilityOverridesDigest: string;
 } {
   const accountId = query.accountId.trim();
   const modelFilter = query.modelFilter;
   const apiKeyFingerprint = computeStringFingerprint(query.apiKey.trim());
+  const gatewayCatalogDigest = computeStringFingerprint(
+    stableSerializeForCache({
+      includeGatewaySupportedModels: query.includeGatewaySupportedModels ?? false,
+      gatewaySupportedModelProviders: query.gatewaySupportedModelProviders ?? [],
+    }),
+  );
+  const manualModelsDigest = computeStringFingerprint(
+    stableSerializeForCache(query.manualModels ?? []),
+  );
   const capabilityOverridesDigest = computeStringFingerprint(
     stableSerializeForCache(query.capabilityOverrides ?? {}),
   );
@@ -169,11 +187,15 @@ function getCloudflareModelCacheLookup(query: CloudflareModelCacheQuery): {
       accountId,
       modelFilter,
       apiKeyFingerprint,
+      gatewayCatalogDigest,
+      manualModelsDigest,
       capabilityOverridesDigest,
     }),
     accountId,
     modelFilter,
     apiKeyFingerprint,
+    gatewayCatalogDigest,
+    manualModelsDigest,
     capabilityOverridesDigest,
   };
 }

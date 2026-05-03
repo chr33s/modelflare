@@ -143,13 +143,14 @@ suite("cloudflare-runtime", () => {
       assert.ok(url.startsWith("https://gateway.ai.cloudflare.com/v1/"), `Unexpected URL: ${url}`);
       assert.ok(url.includes("test-acct"));
       assert.ok(url.includes("my-gw"));
-      assert.ok(url.includes("@cf/meta/llama"));
+      assert.ok(url.endsWith("/compat/chat/completions"));
     });
 
-    test("embeds accountId in direct URL", () => {
+    test("uses the default compat gateway for provider-prefixed models", () => {
       const state: CloudflareRequestState = { accountId: "my-unique-account", apiKey: "k" };
-      const url = buildCloudflareEndpoint("model", state);
+      const url = buildCloudflareEndpoint("openai/gpt-5-mini", state);
       assert.ok(url.includes("my-unique-account"));
+      assert.ok(url.includes("/default/compat/chat/completions"), `Unexpected URL: ${url}`);
     });
   });
 
@@ -475,9 +476,11 @@ suite("cloudflare-runtime", () => {
       assert.ok(capturedUrl?.includes("gateway.ai.cloudflare.com"), `Got: ${capturedUrl}`);
     });
 
-    test("sends cf-aig-authorization header via gateway", async () => {
+    test("sends compat model routing in the request body via gateway", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
       let capturedHeaders: Record<string, string> | undefined;
       mockFetch(async (_url, init) => {
+        capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
         capturedHeaders = init?.headers as Record<string, string>;
         return makeJsonResponse({ result: { response: "ok" } });
       });
@@ -490,7 +493,8 @@ suite("cloudflare-runtime", () => {
         errorLabel: "test",
       });
 
-      assert.strictEqual(capturedHeaders?.["cf-aig-authorization"], "Bearer test-key");
+      assert.strictEqual(capturedBody?.model, "workers-ai/@cf/model");
+      assert.strictEqual(capturedHeaders?.["cf-aig-authorization"], undefined);
     });
 
     test("does not send cf-aig-authorization via direct endpoint", async () => {
@@ -509,6 +513,28 @@ suite("cloudflare-runtime", () => {
       });
 
       assert.strictEqual(capturedHeaders?.["cf-aig-authorization"], undefined);
+    });
+
+    test("routes provider-prefixed models through the default compat gateway", async () => {
+      let capturedUrl: string | undefined;
+      let capturedBody: Record<string, unknown> | undefined;
+      mockFetch(async (url, init) => {
+        capturedUrl = url.toString();
+        capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+        return makeJsonResponse({ choices: [{ message: { content: "ok" } }] });
+      });
+
+      const result = await requestCloudflareChatText(mockContext, {
+        modelHandle: "openai/gpt-5-mini",
+        state: DIRECT_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+      });
+
+      assert.strictEqual(result, "ok");
+      assert.ok(capturedUrl?.includes("/default/compat/chat/completions"), `Got: ${capturedUrl}`);
+      assert.strictEqual(capturedBody?.model, "openai/gpt-5-mini");
     });
 
     test("falls back to direct endpoint when gateway returns 401", async () => {

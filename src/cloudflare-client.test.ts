@@ -1,11 +1,13 @@
 import * as assert from "assert";
 import {
+  fetchCloudflareAiGatewayModels,
   getCloudflareModelHandle,
   fetchCloudflareModels,
   getCloudflareModelFamily,
   getCloudflareModelPickerCategory,
   getCloudflareModelVersion,
   enrichCloudflareModelsWithCapabilities,
+  parseManualCloudflareModels,
   selectCloudflareCompletionModel,
   sortCloudflareModels,
 } from "./cloudflare-client";
@@ -106,7 +108,22 @@ suite("cloudflare-client", () => {
       mockFetch(async () => makeJsonResponse({ success: true, result: models, errors: [] }));
 
       const result = await fetchCloudflareModels("acct", "key", "Text Generation");
-      assert.deepStrictEqual(result, models);
+      assert.deepStrictEqual(result, [
+        {
+          id: "m1",
+          name: "@cf/model-one",
+          provider: undefined,
+          source: "workers-ai",
+          transport: "direct",
+        },
+        {
+          id: "m2",
+          name: "@cf/model-two",
+          provider: undefined,
+          source: "workers-ai",
+          transport: "direct",
+        },
+      ]);
     });
 
     test("fetches multiple pages and de-duplicates by model handle", async () => {
@@ -238,6 +255,92 @@ suite("cloudflare-client", () => {
     });
   });
 
+  suite("fetchCloudflareAiGatewayModels", () => {
+    test("parses supported-model markdown into provider-prefixed model handles", async () => {
+      mockFetch(async () =>
+        makeTextResponse(`| Provider | Model |
+| --- | --- |
+| [OpenAI](/ai-gateway/usage/providers/openai/) | gpt-5-mini |
+| [Google AI Studio](/ai-gateway/usage/providers/google-ai-studio/) | gemini-2.5-flash |
+| [Anthropic](/ai-gateway/usage/providers/anthropic/) | claude-sonnet-4-5 |
+| [OpenAI](/ai-gateway/usage/providers/openai/) | text-embedding-3-small |
+`),
+      );
+
+      const result = await fetchCloudflareAiGatewayModels();
+
+      assert.deepStrictEqual(
+        result.map((model) => getCloudflareModelHandle(model)),
+        ["openai/gpt-5-mini", "google-ai-studio/gemini-2.5-flash", "anthropic/claude-sonnet-4-5"],
+      );
+      assert.strictEqual(result[0]?.detectedCapabilities?.toolCalling, true);
+      assert.strictEqual(result[1]?.provider?.name, "Google AI Studio");
+    });
+
+    test("respects provider allowlists and all-filter mode", async () => {
+      mockFetch(async () =>
+        makeTextResponse(`| Provider | Model |
+| --- | --- |
+| [OpenAI](/ai-gateway/usage/providers/openai/) | gpt-5-mini |
+| [OpenAI](/ai-gateway/usage/providers/openai/) | text-embedding-3-small |
+| [Anthropic](/ai-gateway/usage/providers/anthropic/) | claude-sonnet-4-5 |
+`),
+      );
+
+      const result = await fetchCloudflareAiGatewayModels("all", ["openai"]);
+
+      assert.deepStrictEqual(
+        result.map((model) => getCloudflareModelHandle(model)),
+        ["openai/gpt-5-mini", "openai/text-embedding-3-small"],
+      );
+      assert.strictEqual(result[1]?.task?.name, "Text Embeddings");
+    });
+  });
+
+  suite("parseManualCloudflareModels", () => {
+    test("normalizes manual handles and inferred transport metadata", () => {
+      const result = parseManualCloudflareModels([
+        { model: "workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast" },
+        {
+          model: "openai/gpt-5-mini",
+          name: "GPT-5 Mini",
+          capabilities: { toolCalling: false },
+        },
+      ]);
+
+      assert.deepStrictEqual(
+        result.models.map((model) => ({
+          handle: getCloudflareModelHandle(model),
+          transport: model.transport,
+          name: model.name,
+          toolCalling: model.detectedCapabilities?.toolCalling,
+        })),
+        [
+          {
+            handle: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            transport: "direct",
+            name: "llama-3.3-70b-instruct-fp8-fast",
+            toolCalling: undefined,
+          },
+          {
+            handle: "openai/gpt-5-mini",
+            transport: "compat",
+            name: "GPT-5 Mini",
+            toolCalling: false,
+          },
+        ],
+      );
+      assert.deepStrictEqual(result.warnings, []);
+    });
+
+    test("reports invalid manual model entries", () => {
+      const result = parseManualCloudflareModels(["not-an-object", { model: "   " }]);
+
+      assert.strictEqual(result.models.length, 0);
+      assert.strictEqual(result.warnings.length, 2);
+    });
+  });
+
   suite("derived model metadata", () => {
     test("derives family and version from slug handles", () => {
       const model = makeTextGenModel("uuid-1", "@cf/meta/llama-3.1-8b-instruct");
@@ -258,6 +361,22 @@ suite("cloudflare-client", () => {
 
       assert.deepStrictEqual(getCloudflareModelPickerCategory(model), {
         label: "Mistral",
+        order: 10,
+      });
+    });
+
+    test("derives family/category metadata for provider-prefixed compat handles", () => {
+      const model: CloudflareModel = {
+        id: "openai/gpt-5-mini",
+        name: "gpt-5-mini",
+        provider: { id: "openai", name: "OpenAI" },
+        task: { id: "text-generation", name: "Text Generation" },
+      };
+
+      assert.strictEqual(getCloudflareModelFamily(model), "openai/gpt");
+      assert.strictEqual(getCloudflareModelVersion(model), "5");
+      assert.deepStrictEqual(getCloudflareModelPickerCategory(model), {
+        label: "OpenAI",
         order: 10,
       });
     });
@@ -326,6 +445,25 @@ suite("cloudflare-client", () => {
 
       await enrichCloudflareModelsWithCapabilities("acct", "key", [
         { id: "sr-unique-abc", task: { id: "t1", name: "Speech Recognition" } },
+      ]);
+
+      assert.strictEqual(fetchCalled, false);
+    });
+
+    test("does not call schema API for compat text-generation models", async () => {
+      let fetchCalled = false;
+      mockFetch(async () => {
+        fetchCalled = true;
+        return makeJsonResponse({});
+      });
+
+      await enrichCloudflareModelsWithCapabilities("acct", "key", [
+        {
+          id: "openai/gpt-5-mini",
+          name: "gpt-5-mini",
+          task: { id: "text-generation", name: "Text Generation" },
+          transport: "compat",
+        },
       ]);
 
       assert.strictEqual(fetchCalled, false);

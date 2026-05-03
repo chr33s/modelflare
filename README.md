@@ -1,17 +1,18 @@
 # Cloudflare Models for Copilot
 
-Automatically fetches and surfaces all **Cloudflare Workers AI** models in the VS Code Copilot Chat model picker and can use the same routing path for inline code completions.
+Automatically fetches and surfaces **Cloudflare Workers AI** models plus provider-prefixed **Cloudflare AI Gateway compat** models in the VS Code Copilot Chat model picker, and can use the same routing paths for inline code completions.
 
 The extension now ships both desktop and web entrypoints, so it can run in desktop VS Code and in **VS Code for the Web** when the host supports VS Code's Language Model APIs.
 
 ## Features
 
-- 🔄 Auto-discovers all available Cloudflare Workers AI text generation models on startup
+- 🔄 Auto-discovers Cloudflare Workers AI models and AI Gateway-supported provider models such as `openai/gpt-5-mini`, `google-ai-studio/gemini-2.5-flash`, and `anthropic/claude-sonnet-4-5`
+- ✍️ Supports explicit manual model registration when you want to pin exact handles outside discovery
 - 💾 Caches discovered models in workspace state so reloads can restore them without another model search
 - 🔒 Secure API key storage via VS Code Secret Storage
-- 🌐 Optional routing through **Cloudflare AI Gateway** for analytics, caching & rate limiting
+- 🌐 Routes provider-prefixed models through the documented **Cloudflare AI Gateway compat** endpoint and uses your configured gateway ID when provided
 - 🔃 Manual refresh via command palette
-- 🔎 Inspect which Cloudflare models VS Code actually exposes through the LM API
+- 🔎 Inspect which models discovery returned, which models were registered, and which models VS Code actually exposes through the LM API
 - 🛠 Detects tool-calling, image-input, structured-output, reasoning, and audio capabilities from Cloudflare model schemas when available
 - ✨ Inline code completions powered by discovered Cloudflare text generation models with specific Fill-In-The-Middle (FIM) templates for Qwen and DeepSeek models
 - 🛡️ High resilience with exponential backoff on HTTP 429/5xx errors
@@ -24,38 +25,66 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
 2. Run **"Cloudflare: Store API Key Securely"** from the Command Palette (`Cmd/Ctrl+Shift+P`)
 3. Open VS Code Settings (`cloudflareCopilot`) and set:
    - `cloudflareCopilot.accountId` — your Cloudflare Account ID
-   - `cloudflareCopilot.gatewayId` — _(optional)_ your AI Gateway ID
+     - `cloudflareCopilot.gatewayId` — _(optional)_ your AI Gateway ID if you want a specific gateway instead of the default compat gateway
+     - `cloudflareCopilot.includeGatewaySupportedModels` — include provider-prefixed AI Gateway models in discovery
+     - `cloudflareCopilot.gatewaySupportedModelProviders` — _(optional)_ allowlist specific compat providers such as `openai`, `anthropic`, or `google-ai-studio`
+     - `cloudflareCopilot.manualModels` — _(optional)_ register exact model handles manually
    - `cloudflareCopilot.completionModel` — _(optional)_ model handle, name, or id to pin for inline completions
 4. Models will appear automatically in the **Copilot Chat model picker** and are also used for inline code completions
 5. Run **"Cloudflare: Refresh Models"** any time you want to bypass the cached model list and fetch the latest catalog for the current account
 
+Example manual model configuration:
+
+```json
+{
+  "cloudflareCopilot.manualModels": [
+    {
+      "model": "openai/gpt-5-mini",
+      "name": "GPT-5 Mini",
+      "capabilities": {
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    }
+  ]
+}
+```
+
 ## Settings
 
-| Setting                                 | Description                                       | Default           |
-| --------------------------------------- | ------------------------------------------------- | ----------------- |
-| `cloudflareCopilot.accountId`           | Cloudflare Account ID                             | —                 |
-| `cloudflareCopilot.apiKey`              | API Key (prefer secret storage)                   | —                 |
-| `cloudflareCopilot.gatewayId`           | AI Gateway ID (optional)                          | —                 |
-| `cloudflareCopilot.modelFilter`         | `Text Generation` or `all`                        | `Text Generation` |
-| `cloudflareCopilot.completionModel`     | Optional inline completion model override         | `""`              |
-| `cloudflareCopilot.capabilityOverrides` | JSON object overriding default model capabilities | `{}`              |
+| Setting                                            | Description                                        | Default           |
+| -------------------------------------------------- | -------------------------------------------------- | ----------------- |
+| `cloudflareCopilot.accountId`                      | Cloudflare Account ID                              | —                 |
+| `cloudflareCopilot.apiKey`                         | API Key (prefer secret storage)                    | —                 |
+| `cloudflareCopilot.gatewayId`                      | Optional specific AI Gateway ID for compat routing | —                 |
+| `cloudflareCopilot.includeGatewaySupportedModels`  | Include AI Gateway supported-model discovery       | `true`            |
+| `cloudflareCopilot.gatewaySupportedModelProviders` | Optional allowlist for AI Gateway providers        | `[]`              |
+| `cloudflareCopilot.manualModels`                   | Optional explicit model registrations              | `[]`              |
+| `cloudflareCopilot.modelFilter`                    | `Text Generation` or `all`                         | `Text Generation` |
+| `cloudflareCopilot.completionModel`                | Optional inline completion model override          | `""`              |
+| `cloudflareCopilot.capabilityOverrides`            | JSON object overriding default model capabilities  | `{}`              |
 
 ## Architecture
 
 ```
 VS Code Copilot Chat
        ↓
-vscode.lm.registerLanguageModelChatProvider (single provider exposing all discovered models)
+vscode.lm.registerLanguageModelChatProvider (single provider exposing Workers AI + AI Gateway compat models)
        ↓
-Cloudflare AI Gateway  (if gatewayId set)
-       ↓
-Cloudflare Workers AI  (model inference)
+Cloudflare AI Gateway compat endpoint  (provider-prefixed models, or any model when gatewayId is set)
+                      ↓
+Upstream provider or Workers AI
+
+Cloudflare Workers AI direct endpoint  (hosted @cf/... models when no gateway compat routing is needed)
 ```
 
 ## Commands
 
 - `Cloudflare: Refresh Models` — bypass the cached model list, re-fetch, and re-register all models
-- `Cloudflare: Inspect Models` — compare fetched Cloudflare models with what VS Code exposes via `selectChatModels`
+- `Cloudflare: Inspect Models` — compare discovery results, provider registrations, and what VS Code exposes via `selectChatModels`
 - `Cloudflare: Store Credentials` — store your API key in VS Code secret storage
 
 ## Development

@@ -1,6 +1,8 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import {
+  countCloudflareModelsBySource,
+  diffCloudflareModelIds,
   formatRequestMetricSummary,
   formatRecordedRequestMetric,
   normalizeApiKey,
@@ -136,6 +138,38 @@ suite("extension", () => {
       assert.deepStrictEqual(
         mergeLoadModelsOptions(automaticLoadOptions, interactiveLoadOptions),
         interactiveLoadOptions,
+      );
+    });
+  });
+
+  suite("model inspection helpers", () => {
+    test("counts registered models by discovery source", () => {
+      assert.deepStrictEqual(
+        countCloudflareModelsBySource([
+          { source: "workers-ai" },
+          { source: "ai-gateway" },
+          { source: "ai-gateway" },
+          { source: "manual" },
+          {},
+        ]),
+        {
+          "workers-ai": 2,
+          "ai-gateway": 2,
+          manual: 1,
+        },
+      );
+    });
+
+    test("computes registered-visible model deltas", () => {
+      assert.deepStrictEqual(
+        diffCloudflareModelIds(
+          ["@cf/meta/llama", "openai/gpt-5-mini", "anthropic/claude-sonnet-4-5"],
+          ["openai/gpt-5-mini", "visible-only-model"],
+        ),
+        {
+          registeredOnly: ["@cf/meta/llama", "anthropic/claude-sonnet-4-5"],
+          visibleOnly: ["visible-only-model"],
+        },
       );
     });
   });
