@@ -1,0 +1,223 @@
+import * as vscode from "vscode";
+import type { CloudflareModel } from "./cloudflare-client";
+
+const MODEL_CACHE_STATE_KEY = "cloudflareCopilot.modelCache";
+const MODEL_CACHE_VERSION = 1;
+const MAX_CACHED_MODEL_SETS = 6;
+
+export interface CloudflareModelCacheQuery {
+  accountId: string;
+  apiKey: string;
+  modelFilter: string;
+  capabilityOverrides?: Record<string, unknown>;
+}
+
+export interface CachedCloudflareModels {
+  cachedAt: number;
+  models: CloudflareModel[];
+}
+
+interface StoredCloudflareModelCacheEntry extends CachedCloudflareModels {
+  key: string;
+  accountId: string;
+  modelFilter: string;
+  apiKeyFingerprint: string;
+  capabilityOverridesDigest: string;
+}
+
+interface StoredCloudflareModelCache {
+  version: number;
+  entries: StoredCloudflareModelCacheEntry[];
+}
+
+function cloneCloudflareModels(models: readonly CloudflareModel[]): CloudflareModel[] {
+  if (typeof globalThis.structuredClone === "function") {
+    return globalThis.structuredClone(models) as CloudflareModel[];
+  }
+
+  return JSON.parse(JSON.stringify(models)) as CloudflareModel[];
+}
+
+function stableSerializeForCache(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+
+  if (value === undefined) {
+    return "null";
+  }
+
+  if (typeof value === "bigint") {
+    return JSON.stringify(value.toString());
+  }
+
+  if (typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerializeForCache(item)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== undefined);
+  entries.sort(([left], [right]) => left.localeCompare(right));
+
+  return `{${entries
+    .map(
+      ([entryKey, entryValue]) =>
+        `${JSON.stringify(entryKey)}:${stableSerializeForCache(entryValue)}`,
+    )
+    .join(",")}}`;
+}
+
+function computeStringFingerprint(value: string): string {
+  let hash = 0x811c9dc5;
+
+  for (const char of value) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return hash.toString(16).padStart(8, "0");
+}
+
+function isStoredCloudflareModelCacheEntry(
+  value: unknown,
+): value is StoredCloudflareModelCacheEntry {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const entry = value as Partial<StoredCloudflareModelCacheEntry>;
+  return (
+    typeof entry.key === "string" &&
+    typeof entry.accountId === "string" &&
+    typeof entry.modelFilter === "string" &&
+    typeof entry.apiKeyFingerprint === "string" &&
+    typeof entry.capabilityOverridesDigest === "string" &&
+    typeof entry.cachedAt === "number" &&
+    Array.isArray(entry.models)
+  );
+}
+
+function getEmptyCloudflareModelCache(): StoredCloudflareModelCache {
+  return {
+    version: MODEL_CACHE_VERSION,
+    entries: [],
+  };
+}
+
+function loadStoredCloudflareModelCache(
+  context: vscode.ExtensionContext,
+): StoredCloudflareModelCache {
+  try {
+    const stored = context.workspaceState.get<StoredCloudflareModelCache>(MODEL_CACHE_STATE_KEY);
+    if (!stored || typeof stored !== "object") {
+      return getEmptyCloudflareModelCache();
+    }
+
+    if (stored.version !== MODEL_CACHE_VERSION || !Array.isArray(stored.entries)) {
+      return getEmptyCloudflareModelCache();
+    }
+
+    return {
+      version: MODEL_CACHE_VERSION,
+      entries: stored.entries.filter((entry) => isStoredCloudflareModelCacheEntry(entry)),
+    };
+  } catch (error) {
+    console.error("Failed to load Cloudflare model cache", error);
+    return getEmptyCloudflareModelCache();
+  }
+}
+
+function saveStoredCloudflareModelCache(
+  context: vscode.ExtensionContext,
+  cache: StoredCloudflareModelCache,
+): void {
+  try {
+    const updateResult = context.workspaceState.update(
+      MODEL_CACHE_STATE_KEY,
+      cache,
+    ) as Thenable<void> | void;
+
+    if (updateResult) {
+      void Promise.resolve(updateResult).catch((error: unknown) => {
+        console.error("Failed to save Cloudflare model cache", error);
+      });
+    }
+  } catch (error) {
+    console.error("Failed to save Cloudflare model cache", error);
+  }
+}
+
+function getCloudflareModelCacheLookup(query: CloudflareModelCacheQuery): {
+  key: string;
+  accountId: string;
+  modelFilter: string;
+  apiKeyFingerprint: string;
+  capabilityOverridesDigest: string;
+} {
+  const accountId = query.accountId.trim();
+  const modelFilter = query.modelFilter;
+  const apiKeyFingerprint = computeStringFingerprint(query.apiKey.trim());
+  const capabilityOverridesDigest = computeStringFingerprint(
+    stableSerializeForCache(query.capabilityOverrides ?? {}),
+  );
+
+  return {
+    key: stableSerializeForCache({
+      accountId,
+      modelFilter,
+      apiKeyFingerprint,
+      capabilityOverridesDigest,
+    }),
+    accountId,
+    modelFilter,
+    apiKeyFingerprint,
+    capabilityOverridesDigest,
+  };
+}
+
+export function loadCachedCloudflareModels(
+  context: vscode.ExtensionContext,
+  query: CloudflareModelCacheQuery,
+): CachedCloudflareModels | undefined {
+  const cache = loadStoredCloudflareModelCache(context);
+  const lookup = getCloudflareModelCacheLookup(query);
+  const entry = cache.entries.find((candidate) => candidate.key === lookup.key);
+
+  if (!entry) {
+    return undefined;
+  }
+
+  return {
+    cachedAt: entry.cachedAt,
+    models: cloneCloudflareModels(entry.models),
+  };
+}
+
+export function saveCachedCloudflareModels(
+  context: vscode.ExtensionContext,
+  query: CloudflareModelCacheQuery,
+  models: readonly CloudflareModel[],
+): void {
+  const lookup = getCloudflareModelCacheLookup(query);
+  const cache = loadStoredCloudflareModelCache(context);
+  const entry: StoredCloudflareModelCacheEntry = {
+    ...lookup,
+    cachedAt: Date.now(),
+    models: cloneCloudflareModels(models),
+  };
+
+  const nextEntries = cache.entries.filter((candidate) => candidate.key !== lookup.key);
+  nextEntries.unshift(entry);
+
+  if (nextEntries.length > MAX_CACHED_MODEL_SETS) {
+    nextEntries.length = MAX_CACHED_MODEL_SETS;
+  }
+
+  saveStoredCloudflareModelCache(context, {
+    version: MODEL_CACHE_VERSION,
+    entries: nextEntries,
+  });
+}

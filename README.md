@@ -7,6 +7,7 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
 ## Features
 
 - 🔄 Auto-discovers all available Cloudflare Workers AI text generation models on startup
+- 💾 Caches discovered models in workspace state so reloads can restore them without another model search
 - 🔒 Secure API key storage via VS Code Secret Storage
 - 🌐 Optional routing through **Cloudflare AI Gateway** for analytics, caching & rate limiting
 - 🔃 Manual refresh via command palette
@@ -26,6 +27,7 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
    - `cloudflareCopilot.gatewayId` — _(optional)_ your AI Gateway ID
    - `cloudflareCopilot.completionModel` — _(optional)_ model handle, name, or id to pin for inline completions
 4. Models will appear automatically in the **Copilot Chat model picker** and are also used for inline code completions
+5. Run **"Cloudflare: Refresh Models"** any time you want to bypass the cached model list and fetch the latest catalog for the current account
 
 ## Settings
 
@@ -52,7 +54,7 @@ Cloudflare Workers AI  (model inference)
 
 ## Commands
 
-- `Cloudflare: Refresh Models` — re-fetch and re-register all models
+- `Cloudflare: Refresh Models` — bypass the cached model list, re-fetch, and re-register all models
 - `Cloudflare: Inspect Models` — compare fetched Cloudflare models with what VS Code exposes via `selectChatModels`
 - `Cloudflare: Store Credentials` — store your API key in VS Code secret storage
 

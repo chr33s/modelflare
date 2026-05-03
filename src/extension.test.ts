@@ -5,8 +5,11 @@ import {
   formatRecordedRequestMetric,
   normalizeApiKey,
   getNoModelsFoundMessage,
+  mergeLoadModelsOptions,
+  synchronizeCloudflareModelPicker,
   shouldReloadForConfigurationChange,
   shouldReloadForSecretChange,
+  type LoadModelsOptions,
 } from "./extension";
 import type {
   AggregatedCloudflareRequestMetric,
@@ -14,6 +17,27 @@ import type {
 } from "./request-metrics";
 
 suite("extension", () => {
+  const automaticLoadOptions: LoadModelsOptions = {
+    notifyOnMissingConfiguration: false,
+    notifyOnSuccess: false,
+    notifyOnError: false,
+    cachePolicy: "prefer-cache",
+  };
+
+  const interactiveLoadOptions: LoadModelsOptions = {
+    notifyOnMissingConfiguration: true,
+    notifyOnSuccess: true,
+    notifyOnError: true,
+    cachePolicy: "prefer-cache",
+  };
+
+  const manualRefreshLoadOptions: LoadModelsOptions = {
+    notifyOnMissingConfiguration: true,
+    notifyOnSuccess: true,
+    notifyOnError: true,
+    cachePolicy: "refresh",
+  };
+
   // -------------------------------------------------------------------------
   // normalizeApiKey
   // -------------------------------------------------------------------------
@@ -93,6 +117,61 @@ suite("extension", () => {
 
     test("ignores unrelated secret changes", () => {
       assert.strictEqual(shouldReloadForSecretChange({ key: "other-key" }), false);
+    });
+  });
+
+  suite("mergeLoadModelsOptions", () => {
+    test("preserves manual refresh semantics when it is merged with an automatic reload", () => {
+      assert.deepStrictEqual(
+        mergeLoadModelsOptions(manualRefreshLoadOptions, automaticLoadOptions),
+        manualRefreshLoadOptions,
+      );
+      assert.deepStrictEqual(
+        mergeLoadModelsOptions(automaticLoadOptions, manualRefreshLoadOptions),
+        manualRefreshLoadOptions,
+      );
+    });
+
+    test("keeps the most visible notification flags across queued prefer-cache loads", () => {
+      assert.deepStrictEqual(
+        mergeLoadModelsOptions(automaticLoadOptions, interactiveLoadOptions),
+        interactiveLoadOptions,
+      );
+    });
+  });
+
+  suite("synchronizeCloudflareModelPicker", () => {
+    test("queries VS Code for the Cloudflare vendor models", async () => {
+      let capturedSelector: Parameters<typeof vscode.lm.selectChatModels>[0] | undefined;
+
+      await synchronizeCloudflareModelPicker(async (selector) => {
+        capturedSelector = selector;
+        return [];
+      });
+
+      assert.deepStrictEqual(capturedSelector, { vendor: "cloudflare" });
+    });
+
+    test("swallows picker synchronization errors", async () => {
+      const capturedWarnings: Array<{ message: string; error: unknown }> = [];
+
+      await assert.doesNotReject(async () => {
+        await synchronizeCloudflareModelPicker(
+          async () => {
+            throw new Error("picker unavailable");
+          },
+          (message, error) => {
+            capturedWarnings.push({ message, error });
+          },
+        );
+      });
+
+      assert.strictEqual(capturedWarnings.length, 1);
+      assert.strictEqual(
+        capturedWarnings[0]?.message,
+        "Failed to synchronize Cloudflare model picker",
+      );
+      assert.ok(capturedWarnings[0]?.error instanceof Error);
     });
   });
 

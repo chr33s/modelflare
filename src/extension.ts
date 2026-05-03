@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { enrichCloudflareModelsWithCapabilities, fetchCloudflareModels } from "./cloudflare-client";
 import { registerModelProvider, RegisteredModelProvider } from "./model-provider";
 import { registerCompletionProvider } from "./completion-provider";
+import { loadCachedCloudflareModels, saveCachedCloudflareModels } from "./model-cache";
 import {
   getRecentCloudflareRequestMetrics,
   AggregatedCloudflareRequestMetric,
@@ -26,22 +27,34 @@ let queuedModelReload:
     }
   | undefined;
 
-interface LoadModelsOptions {
+export type ModelLoadCachePolicy = "prefer-cache" | "refresh";
+
+export interface LoadModelsOptions {
   readonly notifyOnMissingConfiguration: boolean;
   readonly notifyOnSuccess: boolean;
   readonly notifyOnError: boolean;
+  readonly cachePolicy: ModelLoadCachePolicy;
 }
 
 const INTERACTIVE_LOAD_OPTIONS: LoadModelsOptions = {
   notifyOnMissingConfiguration: true,
   notifyOnSuccess: true,
   notifyOnError: true,
+  cachePolicy: "prefer-cache",
 };
 
 const AUTOMATIC_LOAD_OPTIONS: LoadModelsOptions = {
   notifyOnMissingConfiguration: false,
   notifyOnSuccess: false,
   notifyOnError: false,
+  cachePolicy: "prefer-cache",
+};
+
+const MANUAL_REFRESH_LOAD_OPTIONS: LoadModelsOptions = {
+  notifyOnMissingConfiguration: true,
+  notifyOnSuccess: true,
+  notifyOnError: true,
+  cachePolicy: "refresh",
 };
 
 export function normalizeApiKey(key: string): string {
@@ -77,6 +90,27 @@ function disposeCompletionRegistration(): void {
 function clearRegisteredModels(): void {
   providerRegistration?.clearModels();
   disposeCompletionRegistration();
+}
+
+function registerLoadedModels(
+  context: vscode.ExtensionContext,
+  models: Parameters<RegisteredModelProvider["updateModels"]>[0],
+  accountId: string,
+  apiKey: string,
+  gatewayId: string | undefined,
+  completionModel: string | undefined,
+): void {
+  providerRegistration ??= registerModelProvider(context);
+  providerRegistration.updateModels(models, accountId, apiKey, gatewayId);
+  disposeCompletionRegistration();
+  completionRegistration = registerCompletionProvider(
+    context,
+    models,
+    accountId,
+    apiKey,
+    gatewayId,
+    completionModel,
+  );
 }
 
 function disposePendingReload(): void {
@@ -119,6 +153,30 @@ export function getNoModelsFoundMessage(modelFilter: string): string {
   );
 }
 
+function getModelLoadSuccessMessage(modelCount: number, options: LoadModelsOptions): string {
+  const suffix = modelCount === 1 ? "" : "s";
+
+  if (options.cachePolicy === "refresh") {
+    return `✅ Cloudflare: ${modelCount} model${suffix} refreshed in Copilot Chat`;
+  }
+
+  return `✅ Cloudflare: ${modelCount} model${suffix} registered in Copilot Chat`;
+}
+
+export async function synchronizeCloudflareModelPicker(
+  selectChatModels: typeof vscode.lm.selectChatModels = (selector) =>
+    vscode.lm.selectChatModels(selector),
+  onError: (message: string, error: unknown) => void = (message, error) => {
+    console.warn(message, error);
+  },
+): Promise<void> {
+  try {
+    await selectChatModels({ vendor: VENDOR });
+  } catch (error) {
+    onError("Failed to synchronize Cloudflare model picker", error);
+  }
+}
+
 export function shouldReloadForConfigurationChange(
   event: vscode.ConfigurationChangeEvent,
 ): boolean {
@@ -140,15 +198,35 @@ function scheduleModelReload(
   }, MODEL_RELOAD_DEBOUNCE_MS);
 }
 
-async function loadAndRegisterModels(
-  context: vscode.ExtensionContext,
-  options: LoadModelsOptions = INTERACTIVE_LOAD_OPTIONS,
-): Promise<void> {
-  if (pendingModelLoad) {
-    queuedModelReload = { context, options };
-    return pendingModelLoad;
-  }
+export function mergeLoadModelsOptions(
+  current: LoadModelsOptions,
+  incoming: LoadModelsOptions,
+): LoadModelsOptions {
+  return {
+    notifyOnMissingConfiguration:
+      current.notifyOnMissingConfiguration || incoming.notifyOnMissingConfiguration,
+    notifyOnSuccess: current.notifyOnSuccess || incoming.notifyOnSuccess,
+    notifyOnError: current.notifyOnError || incoming.notifyOnError,
+    cachePolicy:
+      current.cachePolicy === "refresh" || incoming.cachePolicy === "refresh"
+        ? "refresh"
+        : "prefer-cache",
+  };
+}
 
+function queueModelReload(context: vscode.ExtensionContext, options: LoadModelsOptions): void {
+  queuedModelReload = queuedModelReload
+    ? {
+        context,
+        options: mergeLoadModelsOptions(queuedModelReload.options, options),
+      }
+    : { context, options };
+}
+
+async function performModelLoad(
+  context: vscode.ExtensionContext,
+  options: LoadModelsOptions,
+): Promise<void> {
   const config = vscode.workspace.getConfiguration("cloudflareCopilot");
   const accountId = config.get<string>("accountId");
   const gatewayId = config.get<string>("gatewayId");
@@ -159,6 +237,7 @@ async function loadAndRegisterModels(
 
   if (!accountId || !apiKey) {
     clearRegisteredModels();
+    await synchronizeCloudflareModelPicker();
     if (options.notifyOnMissingConfiguration) {
       vscode.window
         .showWarningMessage(
@@ -175,14 +254,40 @@ async function loadAndRegisterModels(
     return;
   }
 
-  pendingModelLoad = vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Cloudflare: Loading models...",
-      cancellable: false,
-    },
-    async () => {
-      try {
+  try {
+    const cacheQuery = {
+      accountId,
+      apiKey,
+      modelFilter,
+      capabilityOverrides,
+    };
+    const cachedModels =
+      options.cachePolicy === "prefer-cache"
+        ? loadCachedCloudflareModels(context, cacheQuery)
+        : undefined;
+
+    if (cachedModels && cachedModels.models.length > 0) {
+      registerLoadedModels(
+        context,
+        cachedModels.models,
+        accountId,
+        apiKey,
+        gatewayId,
+        completionModel,
+      );
+
+      await synchronizeCloudflareModelPicker();
+
+      return;
+    }
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Cloudflare: Loading models...",
+        cancellable: false,
+      },
+      async () => {
         const models = await fetchCloudflareModels(accountId, apiKey, modelFilter);
         const enrichedModels = await enrichCloudflareModelsWithCapabilities(
           accountId,
@@ -195,10 +300,7 @@ async function loadAndRegisterModels(
           throw new Error(getNoModelsFoundMessage(modelFilter));
         }
 
-        providerRegistration ??= registerModelProvider(context);
-        providerRegistration.updateModels(enrichedModels, accountId, apiKey, gatewayId);
-        disposeCompletionRegistration();
-        completionRegistration = registerCompletionProvider(
+        registerLoadedModels(
           context,
           enrichedModels,
           accountId,
@@ -206,27 +308,52 @@ async function loadAndRegisterModels(
           gatewayId,
           completionModel,
         );
+        saveCachedCloudflareModels(context, cacheQuery, enrichedModels);
+        await synchronizeCloudflareModelPicker();
 
         if (options.notifyOnSuccess) {
           vscode.window.showInformationMessage(
-            `✅ Cloudflare: ${enrichedModels.length} model${enrichedModels.length !== 1 ? "s" : ""} registered in Copilot Chat`,
+            getModelLoadSuccessMessage(enrichedModels.length, options),
           );
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (options.notifyOnError) {
-          vscode.window.showErrorMessage(`Cloudflare Models: Failed to load — ${message}`);
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (options.notifyOnError) {
+      vscode.window.showErrorMessage(`Cloudflare Models: Failed to load — ${message}`);
+    }
+  }
+}
+
+async function loadAndRegisterModels(
+  context: vscode.ExtensionContext,
+  options: LoadModelsOptions = INTERACTIVE_LOAD_OPTIONS,
+): Promise<void> {
+  if (pendingModelLoad) {
+    queueModelReload(context, options);
+    return pendingModelLoad;
+  }
+
+  pendingModelLoad = (async () => {
+    let nextModelReload:
+      | {
+          context: vscode.ExtensionContext;
+          options: LoadModelsOptions;
         }
-      } finally {
-        pendingModelLoad = undefined;
-        const queuedReload = queuedModelReload;
+      | undefined = { context, options };
+
+    try {
+      while (nextModelReload) {
         queuedModelReload = undefined;
-        if (queuedReload) {
-          void loadAndRegisterModels(queuedReload.context, queuedReload.options);
-        }
+        await performModelLoad(nextModelReload.context, nextModelReload.options);
+        nextModelReload = queuedModelReload;
       }
-    },
-  );
+    } finally {
+      pendingModelLoad = undefined;
+      queuedModelReload = undefined;
+    }
+  })();
 
   await pendingModelLoad;
 }
@@ -425,7 +552,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Command: Refresh models
   context.subscriptions.push(
     vscode.commands.registerCommand("cloudflareCopilot.refreshModels", async () => {
-      await loadAndRegisterModels(context, INTERACTIVE_LOAD_OPTIONS);
+      await loadAndRegisterModels(context, MANUAL_REFRESH_LOAD_OPTIONS);
     }),
   );
 
