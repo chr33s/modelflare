@@ -20,7 +20,7 @@ suite("byte-utils", () => {
   });
 
   test("base64 round-trips arbitrary UTF-8 payloads", () => {
-    const source = new TextEncoder().encode("Cloudflare web worker");
+    const source = new TextEncoder().encode("Modelflare web worker");
     const roundTrip = base64ToBytes(bytesToBase64(source));
 
     assert.deepStrictEqual(Array.from(roundTrip), Array.from(source));

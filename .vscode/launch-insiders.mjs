@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const EXTENSION_ID = "chr33s.cloudflare-copilot-models";
+const EXTENSION_ID = "chr33s.modelflare";
 const PROPOSED_API = "languageModelThinkingPart";
 const currentFilePath = fileURLToPath(import.meta.url);
 const vscodeDirectory = path.dirname(currentFilePath);

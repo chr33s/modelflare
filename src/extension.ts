@@ -8,7 +8,7 @@ import {
   getCloudflareModelHandle,
   parseManualCloudflareModels,
 } from "./cloudflare-client";
-import { getCloudflareCopilotConfiguration } from "./config";
+import { getModelflareConfiguration } from "./config";
 import { registerModelProvider, RegisteredModelProvider } from "./model-provider";
 import { registerCompletionProvider } from "./completion-provider";
 import { loadCachedCloudflareModels, saveCachedCloudflareModels } from "./model-cache";
@@ -26,10 +26,11 @@ import {
   summarizeCloudflareRequestMetrics,
   loadCloudflareRequestMetrics,
 } from "./request-metrics";
+import { LANGUAGE_MODEL_VENDOR } from "./provider-identity";
 import { formatUnknownErrorMessage } from "./value-utils";
 
 const SECRET_KEY = "cloudflare-api-key";
-const VENDOR = "cloudflare";
+const VENDOR = LANGUAGE_MODEL_VENDOR;
 const MODEL_RELOAD_DEBOUNCE_MS = 300;
 
 let providerRegistration: RegisteredModelProvider | undefined;
@@ -110,7 +111,7 @@ async function getApiKey(context: vscode.ExtensionContext): Promise<string | und
   if (secret) {
     return normalizeApiKey(secret);
   }
-  const configuredKey = getCloudflareCopilotConfiguration().apiKey;
+  const configuredKey = getModelflareConfiguration().apiKey;
   return configuredKey ? normalizeApiKey(configuredKey) : undefined;
 }
 
@@ -266,7 +267,7 @@ export function getNoModelsFoundMessage(modelFilter: string): string {
 
   return (
     `Cloudflare returned no models for the filter "${modelFilter}". ` +
-    'Try setting "cloudflareCopilot.modelFilter" to "all" to inspect the models available to your account.'
+    'Try setting "modelflare.modelFilter" to "all" to inspect the models available to your account.'
   );
 }
 
@@ -274,10 +275,10 @@ function getModelLoadSuccessMessage(modelCount: number, options: LoadModelsOptio
   const suffix = modelCount === 1 ? "" : "s";
 
   if (options.cachePolicy === "refresh") {
-    return `Cloudflare: ${modelCount} model${suffix} refreshed in Copilot Chat`;
+    return `Modelflare: ${modelCount} model${suffix} refreshed in Copilot Chat`;
   }
 
-  return `Cloudflare: ${modelCount} model${suffix} registered in Copilot Chat`;
+  return `Modelflare: ${modelCount} model${suffix} registered in Copilot Chat`;
 }
 
 export async function synchronizeCloudflareModelPicker(
@@ -295,7 +296,7 @@ export async function synchronizeCloudflareModelPicker(
 export function shouldReloadForConfigurationChange(
   event: vscode.ConfigurationChangeEvent,
 ): boolean {
-  return event.affectsConfiguration("cloudflareCopilot");
+  return event.affectsConfiguration("modelflare");
 }
 
 export function shouldReloadForSecretChange(event: vscode.SecretStorageChangeEvent): boolean {
@@ -342,7 +343,7 @@ async function performModelLoad(
   context: vscode.ExtensionContext,
   options: LoadModelsOptions,
 ): Promise<void> {
-  const config = getCloudflareCopilotConfiguration();
+  const config = getModelflareConfiguration();
   const accountId = config.accountId;
   const gatewayId = config.gatewayId;
   const modelFilter = config.modelFilter;
@@ -361,13 +362,13 @@ async function performModelLoad(
     if (options.notifyOnMissingConfiguration) {
       vscode.window
         .showWarningMessage(
-          "Cloudflare Copilot Models: Please set your Account ID and API Key. " +
-            'Use the "Cloudflare: Store API Key Securely" command for secure key storage.',
+          "Modelflare: Please set your Cloudflare Account ID and API Key. " +
+            'Use the "Modelflare: Store Credentials" command for secure key storage.',
           "Open Settings",
         )
         .then((action: string | undefined) => {
           if (action === "Open Settings") {
-            vscode.commands.executeCommand("workbench.action.openSettings", "cloudflareCopilot");
+            vscode.commands.executeCommand("workbench.action.openSettings", "modelflare");
           }
         });
     }
@@ -428,7 +429,7 @@ async function performModelLoad(
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: "Cloudflare: Loading models...",
+        title: "Modelflare: Loading models...",
         cancellable: true,
       },
       async (_progress, token) => {
@@ -572,7 +573,7 @@ async function performModelLoad(
 
     const message = error instanceof Error ? error.message : String(error);
     if (options.notifyOnError) {
-      vscode.window.showErrorMessage(`Cloudflare Models: Failed to load — ${message}`);
+      vscode.window.showErrorMessage(`Modelflare: Failed to load — ${message}`);
     }
   }
 }
@@ -760,7 +761,7 @@ async function inspectRegisteredModels(): Promise<void> {
   );
 
   clearCloudflareOutputChannel();
-  appendCloudflareLogLine("Cloudflare model inspection");
+  appendCloudflareLogLine("Modelflare model inspection");
   appendCloudflareLogLine("");
   appendCloudflareLogLine("Load summary:");
 
@@ -884,7 +885,7 @@ async function inspectRegisteredModels(): Promise<void> {
 
   showCloudflareOutputChannel(true);
   void vscode.window.showInformationMessage(
-    `Cloudflare: provider has ${registeredModels.length} model${registeredModels.length !== 1 ? "s" : ""}; VS Code exposes ${visibleModels.length}`,
+    `Modelflare: provider has ${registeredModels.length} model${registeredModels.length !== 1 ? "s" : ""}; VS Code exposes ${visibleModels.length}`,
   );
 }
 
@@ -894,20 +895,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Command: Refresh models
   context.subscriptions.push(
-    vscode.commands.registerCommand("cloudflareCopilot.refreshModels", async () => {
+    vscode.commands.registerCommand("modelflare.refreshModels", async () => {
       await loadAndRegisterModels(context, MANUAL_REFRESH_LOAD_OPTIONS);
     }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("cloudflareCopilot.inspectModels", async () => {
+    vscode.commands.registerCommand("modelflare.inspectModels", async () => {
       await inspectRegisteredModels();
     }),
   );
 
   // Command: Securely store API key
   context.subscriptions.push(
-    vscode.commands.registerCommand("cloudflareCopilot.storeApiKey", async () => {
+    vscode.commands.registerCommand("modelflare.storeApiKey", async () => {
       const key = await vscode.window.showInputBox({
         prompt: "Enter your Cloudflare API Key",
         password: true,

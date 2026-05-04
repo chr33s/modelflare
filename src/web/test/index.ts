@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 
-const EXTENSION_ID = "chr33s.cloudflare-copilot-models";
+const EXTENSION_ID = "chr33s.modelflare";
 const EXPECTED_BROWSER_ENTRY = "./dist/extension.js";
 const EXPECTED_COMMANDS = [
-  "cloudflareCopilot.refreshModels",
-  "cloudflareCopilot.inspectModels",
-  "cloudflareCopilot.storeApiKey",
+  "modelflare.refreshModels",
+  "modelflare.inspectModels",
+  "modelflare.storeApiKey",
 ] as const;
 const EXTENSION_LOOKUP_TIMEOUT_MS = 5000;
 const EXTENSION_LOOKUP_INTERVAL_MS = 100;

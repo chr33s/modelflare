@@ -3,7 +3,7 @@ import type { CloudflareModel } from "./cloudflare-client";
 import { logCloudflareError } from "./logging";
 import { computeStringFingerprint, stableSerialize } from "./value-utils";
 
-const MODEL_CACHE_STATE_KEY = "cloudflareCopilot.modelCache";
+const MODEL_CACHE_STATE_KEY = "modelflare.modelCache";
 const MODEL_CACHE_VERSION = 2;
 const MAX_CACHED_MODEL_SETS = 6;
 

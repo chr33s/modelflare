@@ -4,7 +4,7 @@ import {
   getCloudflareModelHandle,
   selectCloudflareCompletionModel,
 } from "./cloudflare-client";
-import { getCloudflareCopilotConfiguration, getCompletionExcludedLanguageSet } from "./config";
+import { getModelflareConfiguration, getCompletionExcludedLanguageSet } from "./config";
 import { CloudflareRequestState, requestCloudflareChatText } from "./cloudflare-runtime";
 
 const COMPLETION_PREFIX_LINES = 120;
@@ -85,9 +85,9 @@ export function registerCompletionProvider(
   }
 
   const completionModelHandle = getCloudflareModelHandle(completionModel);
-  const completionSystemPrompt = getCloudflareCopilotConfiguration().completionSystemPrompt;
+  const completionSystemPrompt = getModelflareConfiguration().completionSystemPrompt;
   const completionReasoningEffort = completionModel.detectedCapabilities?.reasoning
-    ? getCloudflareCopilotConfiguration().reasoningEffort
+    ? getModelflareConfiguration().reasoningEffort
     : undefined;
   const excludedLanguageIds = getCompletionExcludedLanguageSet();
   const state: CloudflareRequestState = { accountId, apiKey, gatewayId };

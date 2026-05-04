@@ -1,5 +1,6 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
+import { LANGUAGE_MODEL_VENDOR } from "./provider-identity";
 import {
   countCloudflareModelsBySource,
   diffCloudflareModelIds,
@@ -97,9 +98,9 @@ suite("extension", () => {
   });
 
   suite("automatic reload triggers", () => {
-    test("reloads for cloudflareCopilot configuration changes", () => {
+    test("reloads for modelflare configuration changes", () => {
       const event = {
-        affectsConfiguration: (section: string) => section === "cloudflareCopilot",
+        affectsConfiguration: (section: string) => section === "modelflare",
       } as vscode.ConfigurationChangeEvent;
 
       assert.strictEqual(shouldReloadForConfigurationChange(event), true);
@@ -183,7 +184,7 @@ suite("extension", () => {
         return [];
       });
 
-      assert.deepStrictEqual(capturedSelector, { vendor: "cloudflare" });
+      assert.deepStrictEqual(capturedSelector, { vendor: LANGUAGE_MODEL_VENDOR });
     });
 
     test("swallows picker synchronization errors", async () => {

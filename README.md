@@ -23,25 +23,25 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
 ## Setup
 
 1. Install the extension
-2. Run **"Cloudflare: Store API Key Securely"** from the Command Palette (`Cmd/Ctrl+Shift+P`)
-3. Open VS Code Settings (`cloudflareCopilot`) or add entries in `.vscode/settings.json` and set:
-   - `cloudflareCopilot.accountId` — your Cloudflare Account ID
-     - `cloudflareCopilot.gatewayId` — _(optional)_ your AI Gateway ID if you want a specific gateway instead of the default compat gateway
-     - `cloudflareCopilot.includeGatewaySupportedModels` — include provider-prefixed AI Gateway models in discovery
-     - `cloudflareCopilot.gatewaySupportedModelProviders` — _(optional)_ allowlist specific compat providers such as `openai`, `anthropic`, or `google-ai-studio`
-     - `cloudflareCopilot.manualModels` — _(optional)_ register exact model handles manually
-   - `cloudflareCopilot.completionModel` — _(optional)_ model handle, name, or id to pin for inline completions
-   - `cloudflareCopilot.reasoningEffort` — _(optional)_ fallback reasoning effort such as `low`, `medium`, or `high` when a model does not expose a per-model **Think Effort** picker
+2. Run **"Modelflare: Store Credentials"** from the Command Palette (`Cmd/Ctrl+Shift+P`)
+3. Open VS Code Settings (`modelflare`) or add entries in `.vscode/settings.json` and set:
+   - `modelflare.accountId` — your Cloudflare Account ID
+     - `modelflare.gatewayId` — _(optional)_ your AI Gateway ID if you want a specific gateway instead of the default compat gateway
+     - `modelflare.includeGatewaySupportedModels` — include provider-prefixed AI Gateway models in discovery
+     - `modelflare.gatewaySupportedModelProviders` — _(optional)_ allowlist specific compat providers such as `openai`, `anthropic`, or `google-ai-studio`
+     - `modelflare.manualModels` — _(optional)_ register exact model handles manually
+   - `modelflare.completionModel` — _(optional)_ model handle, name, or id to pin for inline completions
+   - `modelflare.reasoningEffort` — _(optional)_ fallback reasoning effort such as `low`, `medium`, or `high` when a model does not expose a per-model **Think Effort** picker
 4. Models will appear automatically in the **Copilot Chat model picker** and are also used for inline code completions
-5. Run **"Cloudflare: Refresh Models"** any time you want to bypass the cached model list and fetch the latest catalog for the current account
+5. Run **"Modelflare: Refresh Models"** any time you want to bypass the cached model list and fetch the latest catalog for the current account
 
-Auto-discovered AI Gateway compat models that the extension heuristically classifies as reasoning-capable currently receive a generic `low` / `medium` / `high` Think Effort picker. If you need exact per-model values, override them with `cloudflareCopilot.manualModels[].reasoningEffortLevels`.
+Auto-discovered AI Gateway compat models that the extension heuristically classifies as reasoning-capable currently receive a generic `low` / `medium` / `high` Think Effort picker. If you need exact per-model values, override them with `modelflare.manualModels[].reasoningEffortLevels`.
 
 Example manual model configuration:
 
 ```json
 {
-  "cloudflareCopilot.manualModels": [
+  "modelflare.manualModels": [
     {
       "model": "openai/gpt-5-mini",
       "name": "GPT-5 Mini",
@@ -61,32 +61,32 @@ Example manual model configuration:
 
 ## Settings
 
-| Setting                                            | Description                                                                                         | Default                                                                                                 |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `cloudflareCopilot.accountId`                      | Cloudflare Account ID                                                                               | —                                                                                                       |
-| `cloudflareCopilot.apiKey`                         | API key. Prefer the command-backed secret storage instead.                                          | —                                                                                                       |
-| `cloudflareCopilot.gatewayId`                      | Optional specific AI Gateway ID for compat routing                                                  | —                                                                                                       |
-| `cloudflareCopilot.includeGatewaySupportedModels`  | Include AI Gateway supported-model discovery                                                        | `true`                                                                                                  |
-| `cloudflareCopilot.gatewaySupportedModelProviders` | Optional allowlist for AI Gateway providers                                                         | `[]`                                                                                                    |
-| `cloudflareCopilot.manualModels`                   | Optional explicit model registrations                                                               | `[]`                                                                                                    |
-| `cloudflareCopilot.modelFilter`                    | Which Cloudflare discovery filter to apply (`all`, `latest`, `latest-stable`, or `text-generation`) | `text-generation`                                                                                       |
-| `cloudflareCopilot.completionModel`                | Optional inline completion model override                                                           | `""`                                                                                                    |
-| `cloudflareCopilot.reasoningEffort`                | Optional fallback reasoning effort when no per-model Think Effort selection is available            | `""`                                                                                                    |
-| `cloudflareCopilot.completionSystemPrompt`         | Optional system prompt override for inline completions                                              | `You are a precise code completion engine. Return only the completion with no markdown or explanation.` |
-| `cloudflareCopilot.completionExcludedLanguages`    | Language IDs that should not receive inline completions                                             | `["plaintext", "markdown", "json", "jsonc", "log"]`                                                     |
-| `cloudflareCopilot.capabilityOverrides`            | JSON object overriding default model capabilities by model handle                                   | `{}`                                                                                                    |
+| Setting                                     | Description                                                                                         | Default                                                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `modelflare.accountId`                      | Cloudflare Account ID                                                                               | —                                                                                                       |
+| `modelflare.apiKey`                         | API key. Prefer the command-backed secret storage instead.                                          | —                                                                                                       |
+| `modelflare.gatewayId`                      | Optional specific AI Gateway ID for compat routing                                                  | —                                                                                                       |
+| `modelflare.includeGatewaySupportedModels`  | Include AI Gateway supported-model discovery                                                        | `true`                                                                                                  |
+| `modelflare.gatewaySupportedModelProviders` | Optional allowlist for AI Gateway providers                                                         | `[]`                                                                                                    |
+| `modelflare.manualModels`                   | Optional explicit model registrations                                                               | `[]`                                                                                                    |
+| `modelflare.modelFilter`                    | Which Cloudflare discovery filter to apply (`all`, `latest`, `latest-stable`, or `text-generation`) | `text-generation`                                                                                       |
+| `modelflare.completionModel`                | Optional inline completion model override                                                           | `""`                                                                                                    |
+| `modelflare.reasoningEffort`                | Optional fallback reasoning effort when no per-model Think Effort selection is available            | `""`                                                                                                    |
+| `modelflare.completionSystemPrompt`         | Optional system prompt override for inline completions                                              | `You are a precise code completion engine. Return only the completion with no markdown or explanation.` |
+| `modelflare.completionExcludedLanguages`    | Language IDs that should not receive inline completions                                             | `["plaintext", "markdown", "json", "jsonc", "log"]`                                                     |
+| `modelflare.capabilityOverrides`            | JSON object overriding default model capabilities by model handle                                   | `{}`                                                                                                    |
 
 `.vscode/settings.json`
 
 ```jsonc
 {
-  "cloudflareCopilot.accountId": "your-account-id",
-  // Prefer the "Cloudflare: Store Credentials" command instead of plain-text settings.
-  "cloudflareCopilot.apiKey": "your-api-key",
-  "cloudflareCopilot.gatewayId": "your-gateway-id",
-  "cloudflareCopilot.includeGatewaySupportedModels": true,
-  "cloudflareCopilot.gatewaySupportedModelProviders": ["openai", "anthropic", "google-ai-studio"],
-  "cloudflareCopilot.manualModels": [
+  "modelflare.accountId": "your-account-id",
+  // Prefer the "Modelflare: Store Credentials" command instead of plain-text settings.
+  "modelflare.apiKey": "your-api-key",
+  "modelflare.gatewayId": "your-gateway-id",
+  "modelflare.includeGatewaySupportedModels": true,
+  "modelflare.gatewaySupportedModelProviders": ["openai", "anthropic", "google-ai-studio"],
+  "modelflare.manualModels": [
     {
       "model": "openai/gpt-5-mini",
       "name": "GPT-5 Mini",
@@ -103,18 +103,12 @@ Example manual model configuration:
       "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     },
   ],
-  "cloudflareCopilot.modelFilter": "all",
-  "cloudflareCopilot.completionModel": "@cf/qwen/qwen2.5-coder-32b-instruct",
-  "cloudflareCopilot.reasoningEffort": "medium",
-  "cloudflareCopilot.completionSystemPrompt": "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
-  "cloudflareCopilot.completionExcludedLanguages": [
-    "plaintext",
-    "markdown",
-    "json",
-    "jsonc",
-    "log",
-  ],
-  "cloudflareCopilot.capabilityOverrides": {
+  "modelflare.modelFilter": "all",
+  "modelflare.completionModel": "@cf/qwen/qwen2.5-coder-32b-instruct",
+  "modelflare.reasoningEffort": "medium",
+  "modelflare.completionSystemPrompt": "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
+  "modelflare.completionExcludedLanguages": ["plaintext", "markdown", "json", "jsonc", "log"],
+  "modelflare.capabilityOverrides": {
     "openai/gpt-5-mini": {
       "toolCalling": true,
       "structuredOutput": true,
@@ -142,9 +136,9 @@ Cloudflare Workers AI direct endpoint  (hosted @cf/... models when no gateway co
 
 ## Commands
 
-- `Cloudflare: Refresh Models` — bypass the cached model list, re-fetch, and re-register all models
-- `Cloudflare: Inspect Models` — compare discovery results, provider registrations, and what VS Code exposes via `selectChatModels`
-- `Cloudflare: Store Credentials` — store your API key in VS Code secret storage
+- `Modelflare: Refresh Models` — bypass the cached model list, re-fetch, and re-register all models
+- `Modelflare: Inspect Models` — compare discovery results, provider registrations, and what VS Code exposes via `selectChatModels`
+- `Modelflare: Store Credentials` — store your API key in VS Code secret storage
 
 ## Development
 
@@ -155,7 +149,7 @@ npm install
 npm run compile
 
 vscode:<CTRL+P> > Developer: Reload Window
-                > Cloudflare: Inspect Models
+                > Modelflare: Inspect Models
 ```
 
 Use `npm run build` or `npm run package` to produce a VSIX, `npm run install:local` to install that VSIX into a local desktop VS Code, and `npm run build:insiders` for the full desktop Insiders workflow. The Insiders command packages the extension, installs the generated VSIX into the launcher's isolated `.vscode-insiders/extensions` sandbox, and starts a desktop VS Code runtime with the dev overlay required for `enabledApiProposals: ["languageModelThinkingPart"]`.

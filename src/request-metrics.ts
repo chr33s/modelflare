@@ -55,7 +55,7 @@ interface MutableAggregatedCloudflareRequestMetric extends AggregatedCloudflareR
 }
 
 const MAX_RECORDED_REQUEST_METRICS = 25;
-const TELEMETRY_STATE_KEY = "cloudflareCopilot.requestMetrics";
+const TELEMETRY_STATE_KEY = "modelflare.requestMetrics";
 
 let recordedRequestMetrics: RecordedCloudflareRequestMetric[] = [];
 

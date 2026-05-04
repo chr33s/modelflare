@@ -14,7 +14,7 @@ export const DEFAULT_COMPLETION_EXCLUDED_LANGUAGE_IDS = [
   "log",
 ] as const;
 
-export interface CloudflareCopilotConfiguration {
+export interface ModelflareConfiguration {
   readonly accountId?: string;
   readonly apiKey?: string;
   readonly gatewayId?: string;
@@ -29,8 +29,8 @@ export interface CloudflareCopilotConfiguration {
   readonly capabilityOverrides: Record<string, Partial<CloudflareDetectedCapabilities>>;
 }
 
-export function getCloudflareCopilotConfiguration(): CloudflareCopilotConfiguration {
-  const configuration = vscode.workspace.getConfiguration("cloudflareCopilot");
+export function getModelflareConfiguration(): ModelflareConfiguration {
+  const configuration = vscode.workspace.getConfiguration("modelflare");
 
   return {
     accountId: configuration.get<string>("accountId")?.trim() || undefined,
@@ -62,7 +62,7 @@ export function getCloudflareCopilotConfiguration(): CloudflareCopilotConfigurat
 
 export function getCompletionExcludedLanguageSet(): ReadonlySet<string> {
   return new Set(
-    getCloudflareCopilotConfiguration()
+    getModelflareConfiguration()
       .completionExcludedLanguages.map((languageId) => languageId.trim())
       .filter((languageId) => languageId.length > 0),
   );

@@ -19,7 +19,8 @@ import {
   CloudflareToolDefinition,
   requestCloudflareChatResponse,
 } from "./cloudflare-runtime";
-import { getCloudflareCopilotConfiguration } from "./config";
+import { getModelflareConfiguration } from "./config";
+import { LANGUAGE_MODEL_VENDOR } from "./provider-identity";
 import { normalizeSearchText } from "./value-utils";
 
 interface ModelPickerCategory {
@@ -1005,7 +1006,10 @@ class CloudflareModelProvider
   implements vscode.LanguageModelChatProvider<ProviderModelInformation>, RegisteredModelProvider
 {
   private readonly onDidChangeEmitter = new vscode.EventEmitter<void>();
-  private readonly registration = vscode.lm.registerLanguageModelChatProvider("cloudflare", this);
+  private readonly registration = vscode.lm.registerLanguageModelChatProvider(
+    LANGUAGE_MODEL_VENDOR,
+    this,
+  );
   private modelInfos: ProviderModelInformation[] = [];
   private modelsById = new Map<string, CloudflareModel>();
   private state: CloudflareRequestState | undefined;
@@ -1086,7 +1090,7 @@ class CloudflareModelProvider
     const reasoningEffort = resolveCloudflareReasoningEffort(
       cloudflareModel,
       options,
-      getCloudflareCopilotConfiguration().reasoningEffort,
+      getModelflareConfiguration().reasoningEffort,
     );
 
     const estimatedRequestTokens = estimateRequestTokens(model, messages, options.tools);

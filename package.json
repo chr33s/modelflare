@@ -1,7 +1,7 @@
 {
-  "name": "cloudflare-copilot-models",
+  "name": "modelflare",
   "displayName": "Cloudflare Models for Copilot",
-  "version": "0.0.8",
+  "version": "0.1.0",
   "description": "Automatically surfaces all Cloudflare Workers AI models in VS Code Copilot Chat",
   "categories": [
     "AI",
@@ -9,7 +9,7 @@
     "Other"
   ],
   "repository": {
-    "url": "https://github.com/chr33s/cloudflare-copilot-models"
+    "url": "https://github.com/chr33s/modelflare"
   },
   "publisher": "chr33s",
   "main": "./dist/extension.js",
@@ -22,7 +22,7 @@
     "compile:ts": "tsc -p ./",
     "compile-web": "node ./esbuild.web.mts",
     "fix": "oxfmt --write . && oxlint --fix --fix-suggestions --ignore-pattern=vscode*.d.ts --type-aware --type-check .",
-    "install:local": "npm run package && code --install-extension ./cloudflare-copilot-models-${npm_package_version}.vsix",
+    "install:local": "npm run package && code --install-extension ./modelflare-${npm_package_version}.vsix",
     "package": "vsce package",
     "package-web": "node ./esbuild.web.mts --production",
     "prepackage": "npm run compile",
@@ -51,27 +51,27 @@
   },
   "contributes": {
     "configuration": {
-      "title": "Cloudflare Copilot Models",
+      "title": "Modelflare",
       "properties": {
-        "cloudflareCopilot.accountId": {
+        "modelflare.accountId": {
           "type": "string",
           "description": "Your Cloudflare Account ID"
         },
-        "cloudflareCopilot.apiKey": {
+        "modelflare.apiKey": {
           "type": "string",
           "markdownDescription": "Your Cloudflare API Key. Consider using VS Code's secret storage for security.",
           "description": "Your Cloudflare API Key"
         },
-        "cloudflareCopilot.gatewayId": {
+        "modelflare.gatewayId": {
           "type": "string",
           "description": "Your Cloudflare AI Gateway ID (optional). When set, compat requests use this gateway instead of the default gateway."
         },
-        "cloudflareCopilot.includeGatewaySupportedModels": {
+        "modelflare.includeGatewaySupportedModels": {
           "type": "boolean",
           "default": true,
           "description": "Discover provider-prefixed AI Gateway models from Cloudflare's supported-model catalog and surface them in the Copilot picker."
         },
-        "cloudflareCopilot.gatewaySupportedModelProviders": {
+        "modelflare.gatewaySupportedModelProviders": {
           "type": "array",
           "items": {
             "type": "string"
@@ -79,7 +79,7 @@
           "default": [],
           "description": "Optional provider allowlist for AI Gateway discovery. Use provider IDs like openai, anthropic, or google-ai-studio. Leave empty to include all supported providers."
         },
-        "cloudflareCopilot.manualModels": {
+        "modelflare.manualModels": {
           "type": "array",
           "default": [],
           "description": "Optional explicit model registrations. Use full handles like @cf/meta/llama-3.3-70b-instruct-fp8-fast or openai/gpt-5-mini.",
@@ -140,7 +140,7 @@
             }
           }
         },
-        "cloudflareCopilot.modelFilter": {
+        "modelflare.modelFilter": {
           "type": "string",
           "enum": [
             "all",
@@ -157,22 +157,22 @@
           "default": "text-generation",
           "description": "Which Cloudflare discovery filter to apply when surfacing models in Copilot Chat."
         },
-        "cloudflareCopilot.completionModel": {
+        "modelflare.completionModel": {
           "type": "string",
           "default": "",
           "description": "Optional model handle, name, or id to use for inline completions. When unset, the extension picks a Text Generation model using completion-focused heuristics."
         },
-        "cloudflareCopilot.reasoningEffort": {
+        "modelflare.reasoningEffort": {
           "type": "string",
           "default": "",
           "description": "Optional fallback reasoning effort forwarded to reasoning-capable models when no per-model Think Effort selection is available. Leave empty to omit it. Common values include low, medium, and high."
         },
-        "cloudflareCopilot.completionSystemPrompt": {
+        "modelflare.completionSystemPrompt": {
           "type": "string",
           "default": "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
           "description": "Optional system prompt override used for inline completion requests."
         },
-        "cloudflareCopilot.completionExcludedLanguages": {
+        "modelflare.completionExcludedLanguages": {
           "type": "array",
           "items": {
             "type": "string"
@@ -186,7 +186,7 @@
           ],
           "description": "Language IDs that should not receive inline completions."
         },
-        "cloudflareCopilot.capabilityOverrides": {
+        "modelflare.capabilityOverrides": {
           "type": "object",
           "default": {},
           "description": "Map model handles to specific capabilities to override automatic capability detection. Keys should be model handles, values are objects like { \"toolCalling\": true }."
@@ -195,23 +195,23 @@
     },
     "commands": [
       {
-        "command": "cloudflareCopilot.refreshModels",
-        "title": "Cloudflare: Refresh Models"
+        "command": "modelflare.refreshModels",
+        "title": "Modelflare: Refresh Models"
       },
       {
-        "command": "cloudflareCopilot.inspectModels",
-        "title": "Cloudflare: Inspect Models"
+        "command": "modelflare.inspectModels",
+        "title": "Modelflare: Inspect Models"
       },
       {
-        "command": "cloudflareCopilot.storeApiKey",
-        "title": "Cloudflare: Store Credentials"
+        "command": "modelflare.storeApiKey",
+        "title": "Modelflare: Store Credentials"
       }
     ],
     "languageModelChatProviders": [
       {
-        "displayName": "Cloudflare",
-        "vendor": "cloudflare",
-        "name": "Cloudflare"
+        "displayName": "Modelflare",
+        "vendor": "modelflare",
+        "name": "Modelflare"
       }
     ]
   },

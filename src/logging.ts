@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { formatUnknownErrorMessage } from "./value-utils";
 
-const OUTPUT_CHANNEL_NAME = "Cloudflare Copilot Models";
+const OUTPUT_CHANNEL_NAME = "Modelflare";
 
 let outputChannel: vscode.OutputChannel | undefined;
 
