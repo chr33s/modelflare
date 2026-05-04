@@ -247,6 +247,16 @@ suite("cloudflare-client", () => {
       );
     });
 
+    test("stops immediately when discovery is already aborted", async () => {
+      const controller = new AbortController();
+      controller.abort(new DOMException("Aborted", "AbortError"));
+
+      await assert.rejects(
+        () => fetchCloudflareModels("acct", "key", TEXT_GENERATION_MODEL_FILTER, controller.signal),
+        (error: unknown) => error instanceof DOMException && error.name === "AbortError",
+      );
+    });
+
     test("throws when success is false with error messages", async () => {
       mockFetch(async () =>
         makeJsonResponse({
@@ -734,6 +744,21 @@ suite("cloudflare-client", () => {
 
       // Original model detectedCapabilities are merged, not wiped
       assert.ok(result[0].detectedCapabilities !== undefined);
+    });
+
+    test("propagates cancellation during capability enrichment", async () => {
+      const controller = new AbortController();
+      const models = [makeTextGenModel("abort-uuid-9", "@cf/abort-model-9")];
+
+      mockFetch(async () => {
+        controller.abort(new DOMException("Aborted", "AbortError"));
+        throw controller.signal.reason;
+      });
+
+      await assert.rejects(
+        () => enrichCloudflareModelsWithCapabilities("acct", "key", models, {}, controller.signal),
+        (error: unknown) => error instanceof DOMException && error.name === "AbortError",
+      );
     });
   });
 });

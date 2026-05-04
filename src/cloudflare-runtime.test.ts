@@ -888,6 +888,111 @@ suite("cloudflare-runtime", () => {
       assert.strictEqual(recorded[0].usage?.totalTokens, 3);
     });
 
+    test("keeps the canonical final text when a stream rewrites earlier text", async () => {
+      const chunks: string[] = [];
+
+      mockFetch(async () =>
+        makeSseResponse([
+          JSON.stringify({ response: "Hello world" }),
+          JSON.stringify({ response: "Hello" }),
+          JSON.stringify({ response: "Hello there" }),
+        ]),
+      );
+
+      const response = await requestCloudflareChatResponse(mockContext, {
+        modelHandle: "@cf/model",
+        state: DIRECT_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+        stream: true,
+        onTextChunk: (text) => chunks.push(text),
+      });
+
+      assert.deepStrictEqual(chunks, ["Hello world"]);
+      assert.strictEqual(response?.text, "Hello there");
+      assert.deepStrictEqual(
+        response?.parts
+          .filter((part) => part.type === "text")
+          .map((part) => (part.type === "text" ? part.value : "")),
+        ["Hello there"],
+      );
+    });
+
+    test("clears the request timeout once an SSE response starts streaming", async () => {
+      const originalSetTimeout = globalThis.setTimeout;
+      const originalClearTimeout = globalThis.clearTimeout;
+      const scheduledTimeouts = new Map<number, () => void>();
+      let nextTimeoutId = 0;
+      let scheduledCount = 0;
+      let clearedCount = 0;
+      const encoder = new TextEncoder();
+      let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+      globalThis.setTimeout = ((handler: TimerHandler) => {
+        const timeoutId = ++nextTimeoutId;
+        scheduledCount += 1;
+        scheduledTimeouts.set(timeoutId, () => {
+          if (typeof handler === "function") {
+            handler();
+          }
+        });
+        return timeoutId as unknown as ReturnType<typeof setTimeout>;
+      }) as unknown as typeof setTimeout;
+
+      globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+        clearedCount += 1;
+        scheduledTimeouts.delete(handle as unknown as number);
+      }) as typeof clearTimeout;
+
+      try {
+        mockFetch(async (_url, init) => {
+          const requestSignal = init?.signal as AbortSignal | undefined;
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              streamController = controller;
+              requestSignal?.addEventListener("abort", () => {
+                controller.error(requestSignal.reason ?? new DOMException("Aborted", "AbortError"));
+              });
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ response: "Hello" })}\n\n`),
+              );
+            },
+          });
+
+          return new Response(stream, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        });
+
+        const responsePromise = requestCloudflareChatResponse(mockContext, {
+          modelHandle: "@cf/model",
+          state: DIRECT_STATE,
+          messages: MESSAGES,
+          token: makeActiveToken().token,
+          errorLabel: "test",
+          stream: true,
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        assert.strictEqual(scheduledCount, 1);
+        assert.strictEqual(clearedCount, 1);
+        assert.strictEqual(scheduledTimeouts.size, 0);
+
+        streamController?.enqueue(encoder.encode("data: [DONE]\n\n"));
+        streamController?.close();
+
+        const response = await responsePromise;
+        assert.strictEqual(response?.text, "Hello");
+      } finally {
+        globalThis.setTimeout = originalSetTimeout;
+        globalThis.clearTimeout = originalClearTimeout;
+      }
+    });
+
     test("routes streamed reasoning deltas to onThinkingChunk and thinking parts", async () => {
       const textChunks: string[] = [];
       const thinkingChunks: string[] = [];

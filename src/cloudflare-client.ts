@@ -364,12 +364,14 @@ function getSupportedModelProviderId(providerUrl: string): string | undefined {
 export async function fetchCloudflareAiGatewayModels(
   filter: string = TEXT_GENERATION_MODEL_FILTER,
   includedProviders: readonly string[] = [],
+  signal?: AbortSignal,
 ): Promise<CloudflareModel[]> {
   const normalizedFilter = getAiGatewayModelFilter(filter);
   const response = await fetch(AI_GATEWAY_SUPPORTED_MODELS_URL, {
     headers: {
       "Content-Type": "text/markdown",
     },
+    signal,
   });
   const raw = await response.text();
 
@@ -909,6 +911,7 @@ async function fetchCloudflareModelSchema(
   accountId: string,
   apiKey: string,
   modelId: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const url = new URL(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/schema`,
@@ -920,6 +923,7 @@ async function fetchCloudflareModelSchema(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
+    signal,
   });
   const raw = await response.text();
 
@@ -942,6 +946,7 @@ async function detectModelCapabilities(
       }
     | undefined
   >,
+  signal?: AbortSignal,
 ): Promise<
   | {
       detectedCapabilities: CloudflareDetectedCapabilities;
@@ -954,17 +959,28 @@ async function detectModelCapabilities(
   }
 
   try {
-    const schema = await fetchCloudflareModelSchema(accountId, apiKey, modelHandle);
+    const schema = await fetchCloudflareModelSchema(accountId, apiKey, modelHandle, signal);
     const result = {
       detectedCapabilities: detectCloudflareCapabilitiesFromSchema(schema),
       reasoningEffortLevels: detectCloudflareReasoningEffortLevelsFromSchema(schema),
     };
     capabilityCache.set(modelHandle, result);
     return result;
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
     capabilityCache.set(modelHandle, undefined);
     return undefined;
   }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) {
+    return;
+  }
+
+  throw signal.reason ?? new DOMException("The user aborted a request.", "AbortError");
 }
 
 export async function enrichCloudflareModelsWithCapabilities(
@@ -972,6 +988,7 @@ export async function enrichCloudflareModelsWithCapabilities(
   apiKey: string,
   models: CloudflareModel[],
   overrides: Record<string, Partial<CloudflareDetectedCapabilities>> = {},
+  signal?: AbortSignal,
 ): Promise<CloudflareModel[]> {
   const capabilityCache = new Map<
     string,
@@ -999,6 +1016,7 @@ export async function enrichCloudflareModelsWithCapabilities(
     );
 
   for (let index = 0; index < candidateIndexes.length; index += SCHEMA_BATCH_SIZE) {
+    throwIfAborted(signal);
     const batch = candidateIndexes.slice(index, index + SCHEMA_BATCH_SIZE);
     const results = await Promise.all(
       batch.map(async ({ model, index: modelIndex }) => ({
@@ -1008,9 +1026,12 @@ export async function enrichCloudflareModelsWithCapabilities(
           apiKey,
           getCloudflareModelHandle(model),
           capabilityCache,
+          signal,
         ),
       })),
     );
+
+    throwIfAborted(signal);
 
     for (const result of results) {
       if (result.detectedCapabilities === undefined) {
@@ -1038,11 +1059,13 @@ export async function fetchCloudflareModels(
   accountId: string,
   apiKey: string,
   filter: string = TEXT_GENERATION_MODEL_FILTER,
+  signal?: AbortSignal,
 ): Promise<CloudflareModel[]> {
   const normalizedFilter = normalizeCloudflareModelFilter(filter);
   const dedupedModels = new Map<string, CloudflareModel>();
 
   for (let page = 1; page <= MAX_MODEL_SEARCH_PAGES; page += 1) {
+    throwIfAborted(signal);
     const url = new URL(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`,
     );
@@ -1058,6 +1081,7 @@ export async function fetchCloudflareModels(
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
+      signal,
     });
     const raw = await response.text();
 

@@ -360,7 +360,8 @@ function estimateTextTokens(value: string): number {
   const byteCount = utf8ByteLength(normalized);
   const wordCount = normalized.split(/\s+/u).length;
   const punctuationCount = (normalized.match(/[^\w\s]/g) ?? []).length;
-  return Math.max(1, Math.ceil(byteCount / 4), wordCount + Math.ceil(punctuationCount / 4));
+  // /3 is more conservative than /4 — better for CJK scripts and emoji-dense text.
+  return Math.max(1, Math.ceil(byteCount / 3), wordCount + Math.ceil(punctuationCount / 4));
 }
 
 function estimateObjectTokens(value: unknown): number {
@@ -652,7 +653,7 @@ function serializeToolResultContent(part: vscode.LanguageModelToolResultPart): s
     .map((item) => stringifyUnknownPart(item))
     .join("")
     .trim();
-  return content.length > 0 ? content : "{}";
+  return content.length > 0 ? content : "";
 }
 
 export function toCloudflareMessages(

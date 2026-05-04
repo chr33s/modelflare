@@ -164,6 +164,8 @@ interface CloudflareStreamingAccumulator {
   parts: CloudflareResponsePart[];
   text: string;
   thinkingText: string;
+  textStreamingSuppressed: boolean;
+  thinkingStreamingSuppressed: boolean;
   usage?: CloudflareUsage;
   timeToFirstTextMs?: number;
   readonly requestStartedAtMs: number;
@@ -352,6 +354,8 @@ function createStreamingAccumulator(requestStartedAtMs: number): CloudflareStrea
     parts: [],
     text: "",
     thinkingText: "",
+    textStreamingSuppressed: false,
+    thinkingStreamingSuppressed: false,
     requestStartedAtMs,
     seenDataPartSignatures: new Set<string>(),
     seenToolCallSignatures: new Set<string>(),
@@ -374,24 +378,112 @@ function mergeCloudflareUsage(
   };
 }
 
-function getStreamedTextDelta(currentText: string, candidateText: string): string {
+type StreamedTextUpdate =
+  | {
+      mode: "noop";
+      nextText: string;
+    }
+  | {
+      mode: "append";
+      delta: string;
+      nextText: string;
+    }
+  | {
+      mode: "rewrite";
+      nextText: string;
+    };
+
+function getCommonPrefixLength(left: string, right: string): number {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+
+  while (index < limit && left[index] === right[index]) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function getStreamedTextUpdate(currentText: string, candidateText: string): StreamedTextUpdate {
   if (candidateText.length === 0) {
-    return "";
+    return { mode: "noop", nextText: currentText };
   }
 
   if (currentText.length === 0) {
-    return candidateText;
+    return {
+      mode: "append",
+      delta: candidateText,
+      nextText: candidateText,
+    };
   }
 
   if (candidateText === currentText) {
-    return "";
+    return { mode: "noop", nextText: currentText };
   }
 
   if (candidateText.startsWith(currentText)) {
-    return candidateText.slice(currentText.length);
+    return {
+      mode: "append",
+      delta: candidateText.slice(currentText.length),
+      nextText: candidateText,
+    };
   }
 
-  return candidateText;
+  if (getCommonPrefixLength(currentText, candidateText) > 0) {
+    return {
+      mode: "rewrite",
+      nextText: candidateText,
+    };
+  }
+
+  // Some providers send plain delta fragments instead of cumulative text.
+  // Keep appending those to the canonical text.
+  return {
+    mode: "append",
+    delta: candidateText,
+    nextText: currentText + candidateText,
+  };
+}
+
+function appendStreamedTextPart(
+  accumulator: CloudflareStreamingAccumulator,
+  kind: "text" | "thinking",
+  value: string,
+  mergeIntoTrailingPart = false,
+): void {
+  if (value.length === 0) {
+    return;
+  }
+
+  const lastPart = accumulator.parts[accumulator.parts.length - 1];
+  if (mergeIntoTrailingPart && lastPart?.type === kind) {
+    lastPart.value += value;
+    return;
+  }
+
+  accumulator.parts.push({ type: kind, value });
+}
+
+function replaceTrailingStreamedTextParts(
+  accumulator: CloudflareStreamingAccumulator,
+  kind: "text" | "thinking",
+  value: string,
+): void {
+  let startIndex = accumulator.parts.length;
+
+  while (startIndex > 0 && accumulator.parts[startIndex - 1]?.type === kind) {
+    startIndex -= 1;
+  }
+
+  if (startIndex < accumulator.parts.length) {
+    accumulator.parts.splice(startIndex);
+  }
+
+  if (value.length === 0) {
+    return;
+  }
+
+  accumulator.parts.push({ type: kind, value });
 }
 
 function emitStreamedText(
@@ -403,8 +495,15 @@ function emitStreamedText(
     return;
   }
 
-  const delta = getStreamedTextDelta(accumulator.text, candidateText);
-  if (delta.length === 0) {
+  const update = getStreamedTextUpdate(accumulator.text, candidateText);
+  if (update.mode === "noop") {
+    return;
+  }
+
+  if (update.mode === "rewrite") {
+    accumulator.text = update.nextText;
+    replaceTrailingStreamedTextParts(accumulator, "text", update.nextText);
+    accumulator.textStreamingSuppressed = true;
     return;
   }
 
@@ -412,9 +511,11 @@ function emitStreamedText(
     accumulator.timeToFirstTextMs = Math.max(0, Date.now() - accumulator.requestStartedAtMs);
   }
 
-  accumulator.parts.push({ type: "text", value: delta });
-  accumulator.text += delta;
-  options.onTextChunk?.(delta);
+  accumulator.text = update.nextText;
+  appendStreamedTextPart(accumulator, "text", update.delta, accumulator.textStreamingSuppressed);
+  if (!accumulator.textStreamingSuppressed) {
+    options.onTextChunk?.(update.delta);
+  }
 }
 
 function emitStreamedThinking(
@@ -426,14 +527,28 @@ function emitStreamedThinking(
     return;
   }
 
-  const delta = getStreamedTextDelta(accumulator.thinkingText, candidateText);
-  if (delta.length === 0) {
+  const update = getStreamedTextUpdate(accumulator.thinkingText, candidateText);
+  if (update.mode === "noop") {
     return;
   }
 
-  accumulator.parts.push({ type: "thinking", value: delta });
-  accumulator.thinkingText += delta;
-  options.onThinkingChunk?.(delta);
+  if (update.mode === "rewrite") {
+    accumulator.thinkingText = update.nextText;
+    replaceTrailingStreamedTextParts(accumulator, "thinking", update.nextText);
+    accumulator.thinkingStreamingSuppressed = true;
+    return;
+  }
+
+  accumulator.thinkingText = update.nextText;
+  appendStreamedTextPart(
+    accumulator,
+    "thinking",
+    update.delta,
+    accumulator.thinkingStreamingSuppressed,
+  );
+  if (!accumulator.thinkingStreamingSuppressed) {
+    options.onThinkingChunk?.(update.delta);
+  }
 }
 
 function withResponseMetrics(
@@ -795,6 +910,9 @@ function emitStreamedNonTextPart(
   accumulator: CloudflareStreamingAccumulator,
   part: CloudflareResponseDataPart | CloudflareResponseToolCallPart,
 ): void {
+  accumulator.textStreamingSuppressed = false;
+  accumulator.thinkingStreamingSuppressed = false;
+
   if (part.type === "data") {
     const signature = getDataPartSignature(part);
     if (accumulator.seenDataPartSignatures.has(signature)) {
@@ -860,17 +978,29 @@ function processCloudflareStreamingPayload(
   return false;
 }
 
-function readServerSentEventPayload(eventBlock: string): string | undefined {
-  const dataLines = eventBlock
-    .split(/\r?\n/u)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).replace(/^ /u, ""));
+interface ServerSentEvent {
+  event?: string;
+  data: string;
+}
+
+function readServerSentEvent(eventBlock: string): ServerSentEvent | undefined {
+  const lines = eventBlock.split(/\r?\n/u);
+  let eventType: string | undefined;
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      eventType = line.slice(6).replace(/^ /u, "");
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).replace(/^ /u, ""));
+    }
+  }
 
   if (dataLines.length === 0) {
     return undefined;
   }
 
-  return dataLines.join("\n");
+  return { event: eventType, data: dataLines.join("\n") };
 }
 
 async function parseCloudflareEventStream(
@@ -906,21 +1036,32 @@ async function parseCloudflareEventStream(
 
       const eventBlock = buffer.slice(0, separatorMatch.index);
       buffer = buffer.slice(separatorMatch.index + separatorMatch[0].length);
-      const payload = readServerSentEventPayload(eventBlock);
-      if (!payload) {
+      const sse = readServerSentEvent(eventBlock);
+      if (!sse) {
         continue;
       }
 
-      streamCompleted = processCloudflareStreamingPayload(payload, accumulator, options);
+      if (sse.event === "error") {
+        throw new Error(
+          `Cloudflare ${options.errorLabel} stream emitted an error event: ${sse.data}`,
+        );
+      }
+
+      streamCompleted = processCloudflareStreamingPayload(sse.data, accumulator, options);
       if (streamCompleted) {
         break;
       }
     }
   }
 
-  const remainingPayload = readServerSentEventPayload(buffer);
-  if (!streamCompleted && remainingPayload) {
-    processCloudflareStreamingPayload(remainingPayload, accumulator, options);
+  const remainingSse = readServerSentEvent(buffer);
+  if (!streamCompleted && remainingSse) {
+    if (remainingSse.event === "error") {
+      throw new Error(
+        `Cloudflare ${options.errorLabel} stream emitted an error event: ${remainingSse.data}`,
+      );
+    }
+    processCloudflareStreamingPayload(remainingSse.data, accumulator, options);
   }
 
   flushPendingStreamingToolCalls(accumulator);
@@ -1466,6 +1607,42 @@ function extractCloudflareToolCalls(
   return toolCalls.length > 0 ? toolCalls : undefined;
 }
 
+const CLOUDFLARE_REQUEST_TIMEOUT_MS = 30_000;
+
+function createTimedRequestSignal(
+  parentSignal: AbortSignal,
+  timeoutMs = CLOUDFLARE_REQUEST_TIMEOUT_MS,
+): {
+  signal: AbortSignal;
+  dispose(): void;
+} {
+  const controller = new AbortController();
+  const abortFromParent = () => {
+    controller.abort(
+      parentSignal.reason ?? new DOMException("The user aborted a request.", "AbortError"),
+    );
+  };
+  const timeoutHandle = setTimeout(() => {
+    controller.abort(
+      new DOMException(`Cloudflare request timed out after ${timeoutMs}ms.`, "TimeoutError"),
+    );
+  }, timeoutMs);
+
+  if (parentSignal.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose() {
+      clearTimeout(timeoutHandle);
+      parentSignal.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
 async function requestCloudflareEndpoint(
   options: RequestCloudflareChatTextOptions,
   target: CloudflareEndpointTarget,
@@ -1499,12 +1676,17 @@ async function requestCloudflareEndpoint(
   const maxRetries = 3;
 
   while (true) {
-    response = await fetch(target.url, {
-      method: "POST",
-      headers: buildCloudflareHeaders(options.state, target),
-      body: JSON.stringify(body),
-      signal,
-    });
+    const timedRequest = createTimedRequestSignal(signal);
+    try {
+      response = await fetch(target.url, {
+        method: "POST",
+        headers: buildCloudflareHeaders(options.state, target),
+        body: JSON.stringify(body),
+        signal: timedRequest.signal,
+      });
+    } finally {
+      timedRequest.dispose();
+    }
 
     if (
       !response.ok &&

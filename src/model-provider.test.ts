@@ -545,12 +545,12 @@ suite("model-provider", () => {
       assert.strictEqual(msgs[2].content, "third");
     });
 
-    test("emits '{}' for empty tool result content", () => {
+    test("emits '' for empty tool result content", () => {
       const toolResult = new vscode.LanguageModelToolResultPart("call-empty", [
         new vscode.LanguageModelTextPart("   "),
       ]);
       const msgs = toCloudflareMessages([userMsg(toolResult)]);
-      assert.strictEqual(msgs[0].content, "{}");
+      assert.strictEqual(msgs[0].content, "");
     });
   });
 

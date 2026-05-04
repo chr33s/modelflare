@@ -429,100 +429,147 @@ async function performModelLoad(
       {
         location: vscode.ProgressLocation.Notification,
         title: "Cloudflare: Loading models...",
-        cancellable: false,
+        cancellable: true,
       },
-      async () => {
-        const discoveryWarnings = [...parsedManualModels.warnings];
-        const [workersAiResult, gatewayResult]: [
-          CloudflareModelDiscoveryResult,
-          CloudflareModelDiscoveryResult,
-        ] = await Promise.all([
-          fetchCloudflareModels(accountId, apiKey, modelFilter)
-            .then((models): CloudflareModelDiscoveryResult => ({ models, error: undefined }))
-            .catch((error: unknown) => ({
-              models: [] as CloudflareModel[],
-              error,
-            })),
-          includeGatewaySupportedModels
-            ? fetchCloudflareAiGatewayModels(modelFilter, gatewaySupportedModelProviders)
-                .then((models): CloudflareModelDiscoveryResult => ({ models, error: undefined }))
-                .catch((error: unknown) => ({
-                  models: [] as CloudflareModel[],
-                  error,
-                }))
-            : Promise.resolve<CloudflareModelDiscoveryResult>({
+      async (_progress, token) => {
+        if (token.isCancellationRequested) {
+          return;
+        }
+
+        const abortController = new AbortController();
+        const cancellationDisposable = token.onCancellationRequested(() => {
+          abortController.abort(new DOMException("The user aborted model loading.", "AbortError"));
+        });
+
+        try {
+          const discoveryWarnings = [...parsedManualModels.warnings];
+          const [workersAiResult, gatewayResult]: [
+            CloudflareModelDiscoveryResult,
+            CloudflareModelDiscoveryResult,
+          ] = await Promise.all([
+            fetchCloudflareModels(accountId, apiKey, modelFilter, abortController.signal)
+              .then((models): CloudflareModelDiscoveryResult => ({ models, error: undefined }))
+              .catch((error: unknown) => ({
                 models: [] as CloudflareModel[],
-                error: undefined,
-              }),
-        ]);
+                error,
+              })),
+            includeGatewaySupportedModels
+              ? fetchCloudflareAiGatewayModels(
+                  modelFilter,
+                  gatewaySupportedModelProviders,
+                  abortController.signal,
+                )
+                  .then((models): CloudflareModelDiscoveryResult => ({ models, error: undefined }))
+                  .catch((error: unknown) => ({
+                    models: [] as CloudflareModel[],
+                    error,
+                  }))
+              : Promise.resolve<CloudflareModelDiscoveryResult>({
+                  models: [] as CloudflareModel[],
+                  error: undefined,
+                }),
+          ]);
 
-        if (workersAiResult.error) {
-          const message = formatUnknownErrorMessage(workersAiResult.error);
-          discoveryWarnings.push(`Workers AI discovery failed: ${message}`);
-        }
+          if (token.isCancellationRequested) {
+            return;
+          }
 
-        if (gatewayResult.error) {
-          const message = formatUnknownErrorMessage(gatewayResult.error);
-          discoveryWarnings.push(`AI Gateway discovery failed: ${message}`);
-        }
+          if (workersAiResult.error) {
+            const message = formatUnknownErrorMessage(workersAiResult.error);
+            discoveryWarnings.push(`Workers AI discovery failed: ${message}`);
+          }
 
-        const discoveredCounts = createEmptyCloudflareModelSourceCounts();
-        discoveredCounts["workers-ai"] = workersAiResult.models.length;
-        discoveredCounts["ai-gateway"] = gatewayResult.models.length;
-        discoveredCounts.manual = parsedManualModels.models.length;
+          if (gatewayResult.error) {
+            const message = formatUnknownErrorMessage(gatewayResult.error);
+            discoveryWarnings.push(`AI Gateway discovery failed: ${message}`);
+          }
 
-        const mergedModels = mergeCloudflareModelCatalogs([
-          workersAiResult.models,
-          gatewayResult.models,
-          parsedManualModels.models,
-        ]);
-        const enrichedModels = await enrichCloudflareModelsWithCapabilities(
-          accountId,
-          apiKey,
-          mergedModels.models,
-          capabilityOverrides,
-        );
+          if (
+            includeGatewaySupportedModels &&
+            !gatewayResult.error &&
+            gatewayResult.models.length === 0
+          ) {
+            discoveryWarnings.push(
+              "AI Gateway supported-models catalog returned zero models — " +
+                "Cloudflare may have changed the page format.",
+            );
+          }
 
-        lastModelLoadDiagnostics = {
-          loadedAt: Date.now(),
-          cachePolicy: options.cachePolicy,
-          loadedFromCache: false,
-          modelFilter,
-          gatewayId,
-          includeGatewaySupportedModels,
-          gatewaySupportedModelProviders,
-          configuredManualModels: manualModelEntries.length,
-          discoveredCounts,
-          registeredCounts: countCloudflareModelsBySource(enrichedModels),
-          duplicateHandles: mergedModels.duplicateHandles,
-          warnings: discoveryWarnings,
-        };
+          const discoveredCounts = createEmptyCloudflareModelSourceCounts();
+          discoveredCounts["workers-ai"] = workersAiResult.models.length;
+          discoveredCounts["ai-gateway"] = gatewayResult.models.length;
+          discoveredCounts.manual = parsedManualModels.models.length;
 
-        if (enrichedModels.length === 0) {
-          const warningsSuffix =
-            discoveryWarnings.length > 0 ? ` ${discoveryWarnings.join(" ")}` : "";
-          throw new Error(`${getNoModelsFoundMessage(modelFilter)}${warningsSuffix}`);
-        }
+          const mergedModels = mergeCloudflareModelCatalogs([
+            workersAiResult.models,
+            gatewayResult.models,
+            parsedManualModels.models,
+          ]);
+          const enrichedModels = await enrichCloudflareModelsWithCapabilities(
+            accountId,
+            apiKey,
+            mergedModels.models,
+            capabilityOverrides,
+            abortController.signal,
+          ).catch((error) => {
+            if (abortController.signal.aborted) {
+              return undefined;
+            }
 
-        registerLoadedModels(
-          context,
-          enrichedModels,
-          accountId,
-          apiKey,
-          gatewayId,
-          completionModel,
-        );
-        saveCachedCloudflareModels(context, cacheQuery, enrichedModels);
-        await synchronizeCloudflareModelPicker();
+            throw error;
+          });
 
-        if (options.notifyOnSuccess) {
-          vscode.window.showInformationMessage(
-            getModelLoadSuccessMessage(enrichedModels.length, options),
+          if (token.isCancellationRequested || !enrichedModels) {
+            return;
+          }
+
+          lastModelLoadDiagnostics = {
+            loadedAt: Date.now(),
+            cachePolicy: options.cachePolicy,
+            loadedFromCache: false,
+            modelFilter,
+            gatewayId,
+            includeGatewaySupportedModels,
+            gatewaySupportedModelProviders,
+            configuredManualModels: manualModelEntries.length,
+            discoveredCounts,
+            registeredCounts: countCloudflareModelsBySource(enrichedModels),
+            duplicateHandles: mergedModels.duplicateHandles,
+            warnings: discoveryWarnings,
+          };
+
+          if (enrichedModels.length === 0) {
+            const warningsSuffix =
+              discoveryWarnings.length > 0 ? ` ${discoveryWarnings.join(" ")}` : "";
+            throw new Error(`${getNoModelsFoundMessage(modelFilter)}${warningsSuffix}`);
+          }
+
+          registerLoadedModels(
+            context,
+            enrichedModels,
+            accountId,
+            apiKey,
+            gatewayId,
+            completionModel,
           );
+          saveCachedCloudflareModels(context, cacheQuery, enrichedModels);
+          await synchronizeCloudflareModelPicker();
+
+          if (options.notifyOnSuccess) {
+            vscode.window.showInformationMessage(
+              getModelLoadSuccessMessage(enrichedModels.length, options),
+            );
+          }
+        } finally {
+          cancellationDisposable.dispose();
         }
       },
     );
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     if (options.notifyOnError) {
       vscode.window.showErrorMessage(`Cloudflare Models: Failed to load — ${message}`);
