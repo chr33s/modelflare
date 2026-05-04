@@ -218,6 +218,7 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "icon": "icon.png",
   "engines": {
     "node": ">=22.18.0",
     "vscode": "^1.99.0"
