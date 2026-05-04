@@ -2,6 +2,7 @@ import * as assert from "assert";
 import * as vscode from "vscode";
 import { loadCachedCloudflareModels, saveCachedCloudflareModels } from "./model-cache";
 import type { CloudflareModel } from "./cloudflare-client";
+import { TEXT_GENERATION_MODEL_FILTER } from "./model-filter";
 
 interface MockMemento {
   readonly values: Map<string, unknown>;
@@ -48,7 +49,7 @@ suite("model-cache", () => {
       {
         accountId: "acct-a",
         apiKey: "secret-a",
-        modelFilter: "Text Generation",
+        modelFilter: TEXT_GENERATION_MODEL_FILTER,
       },
       models,
     );
@@ -56,7 +57,7 @@ suite("model-cache", () => {
     const cached = loadCachedCloudflareModels(context, {
       accountId: "acct-a",
       apiKey: "secret-a",
-      modelFilter: "Text Generation",
+      modelFilter: TEXT_GENERATION_MODEL_FILTER,
     });
 
     assert.ok(cached);
@@ -71,7 +72,7 @@ suite("model-cache", () => {
       {
         accountId: "acct-a",
         apiKey: "secret-a",
-        modelFilter: "Text Generation",
+        modelFilter: TEXT_GENERATION_MODEL_FILTER,
       },
       [makeModel("uuid-1", "@cf/meta/llama-3.3-8b-instruct")],
     );
@@ -79,7 +80,7 @@ suite("model-cache", () => {
     const cached = loadCachedCloudflareModels(context, {
       accountId: "acct-a",
       apiKey: "secret-b",
-      modelFilter: "Text Generation",
+      modelFilter: TEXT_GENERATION_MODEL_FILTER,
     });
 
     assert.strictEqual(cached, undefined);
@@ -94,7 +95,7 @@ suite("model-cache", () => {
       {
         accountId: "acct-a",
         apiKey: "secret-a",
-        modelFilter: "Text Generation",
+        modelFilter: TEXT_GENERATION_MODEL_FILTER,
         capabilityOverrides: {
           "@cf/meta/llama-3.3-8b-instruct": {
             imageInput: false,
@@ -108,7 +109,7 @@ suite("model-cache", () => {
     const cached = loadCachedCloudflareModels(context, {
       accountId: "acct-a",
       apiKey: "secret-a",
-      modelFilter: "Text Generation",
+      modelFilter: TEXT_GENERATION_MODEL_FILTER,
       capabilityOverrides: {
         "@cf/meta/llama-3.3-8b-instruct": {
           toolCalling: true,
@@ -127,7 +128,7 @@ suite("model-cache", () => {
       {
         accountId: "acct-a",
         apiKey: "secret-a",
-        modelFilter: "Text Generation",
+        modelFilter: TEXT_GENERATION_MODEL_FILTER,
       },
       [makeModel("uuid-1", "@cf/meta/llama-3.3-8b-instruct")],
     );
@@ -135,7 +136,7 @@ suite("model-cache", () => {
     const cached = loadCachedCloudflareModels(context, {
       accountId: "acct-a",
       apiKey: "secret-a",
-      modelFilter: "Text Generation",
+      modelFilter: TEXT_GENERATION_MODEL_FILTER,
     });
     assert.ok(cached);
 
@@ -145,7 +146,7 @@ suite("model-cache", () => {
     const restored = loadCachedCloudflareModels(context, {
       accountId: "acct-a",
       apiKey: "secret-a",
-      modelFilter: "Text Generation",
+      modelFilter: TEXT_GENERATION_MODEL_FILTER,
     });
 
     assert.strictEqual(restored?.models.length, 1);

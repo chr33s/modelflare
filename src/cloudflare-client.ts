@@ -3,6 +3,13 @@ import {
   readManualCloudflareModelCapabilities,
   type CloudflareDetectedCapabilities,
 } from "./cloudflare-model-capabilities";
+import {
+  ALL_MODEL_FILTER,
+  getAiGatewayModelFilter,
+  normalizeCloudflareModelFilter,
+  TEXT_GENERATION_MODEL_FILTER,
+  TEXT_GENERATION_TASK_NAME,
+} from "./model-filter";
 import { getObjectRecord, normalizeSearchText, parseJson } from "./value-utils";
 
 export interface CloudflareModel {
@@ -53,8 +60,6 @@ interface CloudflareModelsResponse {
   };
 }
 
-const ALL_MODELS_FILTER = "all";
-const TEXT_GENERATION_TASK = "Text Generation";
 const AI_GATEWAY_SUPPORTED_MODELS_URL =
   "https://developers.cloudflare.com/ai-gateway/supported-models/index.md";
 const SCHEMA_BATCH_SIZE = 5;
@@ -212,6 +217,18 @@ function toTaskId(taskName: string): string {
     .replace(/^-|-$/gu, "");
 }
 
+function doesModelMatchFilter(model: CloudflareModel, filter: string): boolean {
+  if (filter === ALL_MODEL_FILTER) {
+    return true;
+  }
+
+  const taskName = model.task?.name?.trim();
+  const taskId = model.task?.id?.trim();
+  const normalizedTaskId = toTaskId(filter);
+
+  return taskName === filter || taskId === normalizedTaskId;
+}
+
 function getHandleLeaf(modelHandle: string): string {
   const segments = modelHandle.split("/").filter((segment) => segment.length > 0);
   return segments[segments.length - 1] ?? modelHandle;
@@ -248,14 +265,14 @@ function inferAiGatewayTaskName(modelId: string): string {
     return "Music Generation";
   }
 
-  return TEXT_GENERATION_TASK;
+  return TEXT_GENERATION_TASK_NAME;
 }
 
 function inferCompatModelCapabilities(
   modelHandle: string,
   taskName: string,
 ): CloudflareDetectedCapabilities | undefined {
-  if (taskName !== TEXT_GENERATION_TASK) {
+  if (taskName !== TEXT_GENERATION_TASK_NAME) {
     return undefined;
   }
 
@@ -326,9 +343,10 @@ function getSupportedModelProviderId(providerUrl: string): string | undefined {
 }
 
 export async function fetchCloudflareAiGatewayModels(
-  filter: string = TEXT_GENERATION_TASK,
+  filter: string = TEXT_GENERATION_MODEL_FILTER,
   includedProviders: readonly string[] = [],
 ): Promise<CloudflareModel[]> {
+  const normalizedFilter = getAiGatewayModelFilter(filter);
   const response = await fetch(AI_GATEWAY_SUPPORTED_MODELS_URL, {
     headers: {
       "Content-Type": "text/markdown",
@@ -368,7 +386,7 @@ export async function fetchCloudflareAiGatewayModels(
     }
 
     const model = buildAiGatewayModel(providerId, providerLabel, modelId);
-    if (filter !== ALL_MODELS_FILTER && model.task?.name !== filter) {
+    if (!doesModelMatchFilter(model, normalizedFilter)) {
       continue;
     }
 
@@ -654,7 +672,7 @@ function isExperimentalModel(model: CloudflareModel): boolean {
 function getCloudflareModelRankingScore(model: CloudflareModel): number {
   let score = 0;
 
-  if (model.task?.name === TEXT_GENERATION_TASK) {
+  if (model.task?.name === TEXT_GENERATION_TASK_NAME) {
     score += 1_000;
   }
 
@@ -682,7 +700,7 @@ function getCloudflareModelRankingScore(model: CloudflareModel): number {
 }
 
 function getCompletionModelRankingScore(model: CloudflareModel): number {
-  if (model.task?.name !== TEXT_GENERATION_TASK) {
+  if (model.task?.name !== TEXT_GENERATION_TASK_NAME) {
     return Number.NEGATIVE_INFINITY;
   }
 
@@ -757,7 +775,7 @@ export function getCloudflareModelPickerCategory(
     model.provider?.name?.trim() || (authorSegment ? toDisplayLabel(authorSegment) : "Cloudflare");
   const taskName = model.task?.name?.trim();
 
-  if (taskName && taskName !== TEXT_GENERATION_TASK) {
+  if (taskName && taskName !== TEXT_GENERATION_TASK_NAME) {
     return {
       label: `${authorLabel} • ${taskName}`,
       order: 20,
@@ -807,7 +825,9 @@ export function selectCloudflareCompletionModel(
   models: readonly CloudflareModel[],
   preferredModelHandle?: string,
 ): CloudflareModel | undefined {
-  const textGenerationModels = models.filter((model) => model.task?.name === TEXT_GENERATION_TASK);
+  const textGenerationModels = models.filter(
+    (model) => model.task?.name === TEXT_GENERATION_TASK_NAME,
+  );
   if (textGenerationModels.length === 0) {
     return undefined;
   }
@@ -902,7 +922,7 @@ export async function enrichCloudflareModelsWithCapabilities(
     .map((model, index) => ({ model, index }))
     .filter(
       ({ model }) =>
-        model.task?.name === TEXT_GENERATION_TASK &&
+        model.task?.name === TEXT_GENERATION_TASK_NAME &&
         !isCloudflareCompatModelHandle(getCloudflareModelHandle(model)),
     );
 
@@ -941,8 +961,9 @@ export async function enrichCloudflareModelsWithCapabilities(
 export async function fetchCloudflareModels(
   accountId: string,
   apiKey: string,
-  filter: string = "Text Generation",
+  filter: string = TEXT_GENERATION_MODEL_FILTER,
 ): Promise<CloudflareModel[]> {
+  const normalizedFilter = normalizeCloudflareModelFilter(filter);
   const dedupedModels = new Map<string, CloudflareModel>();
 
   for (let page = 1; page <= MAX_MODEL_SEARCH_PAGES; page += 1) {
@@ -952,8 +973,8 @@ export async function fetchCloudflareModels(
     url.searchParams.set("per_page", MODEL_SEARCH_PAGE_SIZE.toString());
     url.searchParams.set("page", page.toString());
 
-    if (filter !== ALL_MODELS_FILTER) {
-      url.searchParams.set("task", filter);
+    if (normalizedFilter !== ALL_MODEL_FILTER) {
+      url.searchParams.set("task", normalizedFilter);
     }
 
     const response = await fetch(url, {

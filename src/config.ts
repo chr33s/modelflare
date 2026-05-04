@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import type { CloudflareDetectedCapabilities } from "./cloudflare-model-capabilities";
+import { normalizeCloudflareModelFilter, TEXT_GENERATION_MODEL_FILTER } from "./model-filter";
 
-export const DEFAULT_MODEL_FILTER = "Text Generation";
+export const DEFAULT_MODEL_FILTER = TEXT_GENERATION_MODEL_FILTER;
 export const DEFAULT_INCLUDE_GATEWAY_SUPPORTED_MODELS = true;
 export const DEFAULT_COMPLETION_SYSTEM_PROMPT =
   "You are a precise code completion engine. Return only the completion with no markdown or explanation.";
@@ -34,7 +35,9 @@ export function getCloudflareCopilotConfiguration(): CloudflareCopilotConfigurat
     accountId: configuration.get<string>("accountId")?.trim() || undefined,
     apiKey: configuration.get<string>("apiKey")?.trim() || undefined,
     gatewayId: configuration.get<string>("gatewayId")?.trim() || undefined,
-    modelFilter: configuration.get<string>("modelFilter") ?? DEFAULT_MODEL_FILTER,
+    modelFilter: normalizeCloudflareModelFilter(
+      configuration.get<string>("modelFilter") ?? DEFAULT_MODEL_FILTER,
+    ),
     includeGatewaySupportedModels:
       configuration.get<boolean>("includeGatewaySupportedModels") ??
       DEFAULT_INCLUDE_GATEWAY_SUPPORTED_MODELS,

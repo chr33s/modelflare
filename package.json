@@ -1,7 +1,7 @@
 {
   "name": "cloudflare-copilot-models",
   "displayName": "Cloudflare Models for Copilot",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Automatically surfaces all Cloudflare Workers AI models in VS Code Copilot Chat",
   "categories": [
     "AI",
@@ -136,10 +136,18 @@
           "type": "string",
           "enum": [
             "all",
-            "Text Generation"
+            "latest",
+            "latest-stable",
+            "text-generation"
           ],
-          "default": "Text Generation",
-          "description": "Filter which Cloudflare model types to surface in Copilot Chat."
+          "enumDescriptions": [
+            "Include every discovered model.",
+            "Use Cloudflare's latest-model shortcut for Workers AI discovery.",
+            "Use Cloudflare's latest stable-model shortcut for Workers AI discovery.",
+            "Limit discovery to text-generation models."
+          ],
+          "default": "text-generation",
+          "description": "Which Cloudflare discovery filter to apply when surfacing models in Copilot Chat."
         },
         "cloudflareCopilot.completionModel": {
           "type": "string",

@@ -19,6 +19,11 @@ import {
   restoreGlobalFetch,
   saveGlobalFetch,
 } from "./test-utils";
+import {
+  LATEST_MODEL_FILTER,
+  LATEST_STABLE_MODEL_FILTER,
+  TEXT_GENERATION_MODEL_FILTER,
+} from "./model-filter";
 
 let savedFetch: typeof fetch;
 
@@ -91,7 +96,7 @@ suite("cloudflare-client", () => {
       ];
       mockFetch(async () => makeJsonResponse({ success: true, result: models, errors: [] }));
 
-      const result = await fetchCloudflareModels("acct", "key", "Text Generation");
+      const result = await fetchCloudflareModels("acct", "key", TEXT_GENERATION_MODEL_FILTER);
       assert.deepStrictEqual(result, [
         {
           id: "m1",
@@ -166,13 +171,26 @@ suite("cloudflare-client", () => {
         return makeJsonResponse({ success: true, result: [], errors: [] });
       });
 
-      await fetchCloudflareModels("acct", "key", "Text Generation");
+      await fetchCloudflareModels("acct", "key", TEXT_GENERATION_MODEL_FILTER);
 
       assert.ok(
-        capturedUrl?.includes("task=Text+Generation") ||
-          capturedUrl?.includes("task=Text%20Generation"),
+        capturedUrl?.includes("task=text-generation"),
         `Expected task param in URL, got: ${capturedUrl}`,
       );
+    });
+
+    test("passes through latest-style filter values to the Workers AI API", async () => {
+      const capturedUrls: string[] = [];
+      mockFetch(async (url) => {
+        capturedUrls.push(url.toString());
+        return makeJsonResponse({ success: true, result: [], errors: [] });
+      });
+
+      await fetchCloudflareModels("acct", "key", LATEST_MODEL_FILTER);
+      await fetchCloudflareModels("acct", "key", LATEST_STABLE_MODEL_FILTER);
+
+      assert.ok(capturedUrls[0]?.includes("task=latest"), capturedUrls[0]);
+      assert.ok(capturedUrls[1]?.includes("task=latest-stable"), capturedUrls[1]);
     });
 
     test("omits task query param for 'all' filter", async () => {
@@ -186,7 +204,7 @@ suite("cloudflare-client", () => {
       assert.ok(!capturedUrl?.includes("task="), `Unexpected task param in URL: ${capturedUrl}`);
     });
 
-    test("uses Text Generation filter by default", async () => {
+    test("uses text-generation filter by default", async () => {
       let capturedUrl: string | undefined;
       mockFetch(async (url) => {
         capturedUrl = url.toString();
@@ -194,7 +212,10 @@ suite("cloudflare-client", () => {
       });
 
       await fetchCloudflareModels("acct", "key");
-      assert.ok(capturedUrl?.includes("task="), `Expected task param in URL, got: ${capturedUrl}`);
+      assert.ok(
+        capturedUrl?.includes("task=text-generation"),
+        `Expected task param in URL, got: ${capturedUrl}`,
+      );
     });
 
     test("includes accountId in URL", async () => {
@@ -212,7 +233,7 @@ suite("cloudflare-client", () => {
       mockFetch(async () => makeTextResponse("Unauthorized", 401));
 
       await assert.rejects(
-        () => fetchCloudflareModels("acct", "bad-key", "Text Generation"),
+        () => fetchCloudflareModels("acct", "bad-key", TEXT_GENERATION_MODEL_FILTER),
         /401/,
       );
     });
@@ -220,7 +241,10 @@ suite("cloudflare-client", () => {
     test("throws on invalid JSON response", async () => {
       mockFetch(async () => makeTextResponse("not-json"));
 
-      await assert.rejects(() => fetchCloudflareModels("acct", "key", "Text Generation"), /parse/i);
+      await assert.rejects(
+        () => fetchCloudflareModels("acct", "key", TEXT_GENERATION_MODEL_FILTER),
+        /parse/i,
+      );
     });
 
     test("throws when success is false with error messages", async () => {
@@ -233,7 +257,7 @@ suite("cloudflare-client", () => {
       );
 
       await assert.rejects(
-        () => fetchCloudflareModels("acct", "key", "Text Generation"),
+        () => fetchCloudflareModels("acct", "key", TEXT_GENERATION_MODEL_FILTER),
         /Invalid API key/,
       );
     });
@@ -278,6 +302,25 @@ suite("cloudflare-client", () => {
         ["openai/gpt-5-mini", "openai/text-embedding-3-small"],
       );
       assert.strictEqual(result[1]?.task?.name, "Text Embeddings");
+    });
+
+    test("treats latest-style filters as text-generation discovery for AI Gateway models", async () => {
+      mockFetch(async () =>
+        makeTextResponse(`| Provider | Model |
+| --- | --- |
+| [OpenAI](/ai-gateway/usage/providers/openai/) | gpt-5-mini |
+| [OpenAI](/ai-gateway/usage/providers/openai/) | text-embedding-3-small |
+`),
+      );
+
+      for (const filter of [LATEST_MODEL_FILTER, LATEST_STABLE_MODEL_FILTER]) {
+        const result = await fetchCloudflareAiGatewayModels(filter);
+
+        assert.deepStrictEqual(
+          result.map((model) => getCloudflareModelHandle(model)),
+          ["openai/gpt-5-mini"],
+        );
+      }
     });
   });
 

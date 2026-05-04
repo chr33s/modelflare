@@ -55,19 +55,19 @@ Example manual model configuration:
 
 ## Settings
 
-| Setting                                            | Description                                                       | Default                                                                                                 |
-| -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `cloudflareCopilot.accountId`                      | Cloudflare Account ID                                             | —                                                                                                       |
-| `cloudflareCopilot.apiKey`                         | API key. Prefer the command-backed secret storage instead.        | —                                                                                                       |
-| `cloudflareCopilot.gatewayId`                      | Optional specific AI Gateway ID for compat routing                | —                                                                                                       |
-| `cloudflareCopilot.includeGatewaySupportedModels`  | Include AI Gateway supported-model discovery                      | `true`                                                                                                  |
-| `cloudflareCopilot.gatewaySupportedModelProviders` | Optional allowlist for AI Gateway providers                       | `[]`                                                                                                    |
-| `cloudflareCopilot.manualModels`                   | Optional explicit model registrations                             | `[]`                                                                                                    |
-| `cloudflareCopilot.modelFilter`                    | Which discovered Cloudflare model types to surface                | `Text Generation`                                                                                       |
-| `cloudflareCopilot.completionModel`                | Optional inline completion model override                         | `""`                                                                                                    |
-| `cloudflareCopilot.completionSystemPrompt`         | Optional system prompt override for inline completions            | `You are a precise code completion engine. Return only the completion with no markdown or explanation.` |
-| `cloudflareCopilot.completionExcludedLanguages`    | Language IDs that should not receive inline completions           | `["plaintext", "markdown", "json", "jsonc", "log"]`                                                     |
-| `cloudflareCopilot.capabilityOverrides`            | JSON object overriding default model capabilities by model handle | `{}`                                                                                                    |
+| Setting                                            | Description                                                                                         | Default                                                                                                 |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `cloudflareCopilot.accountId`                      | Cloudflare Account ID                                                                               | —                                                                                                       |
+| `cloudflareCopilot.apiKey`                         | API key. Prefer the command-backed secret storage instead.                                          | —                                                                                                       |
+| `cloudflareCopilot.gatewayId`                      | Optional specific AI Gateway ID for compat routing                                                  | —                                                                                                       |
+| `cloudflareCopilot.includeGatewaySupportedModels`  | Include AI Gateway supported-model discovery                                                        | `true`                                                                                                  |
+| `cloudflareCopilot.gatewaySupportedModelProviders` | Optional allowlist for AI Gateway providers                                                         | `[]`                                                                                                    |
+| `cloudflareCopilot.manualModels`                   | Optional explicit model registrations                                                               | `[]`                                                                                                    |
+| `cloudflareCopilot.modelFilter`                    | Which Cloudflare discovery filter to apply (`all`, `latest`, `latest-stable`, or `text-generation`) | `text-generation`                                                                                       |
+| `cloudflareCopilot.completionModel`                | Optional inline completion model override                                                           | `""`                                                                                                    |
+| `cloudflareCopilot.completionSystemPrompt`         | Optional system prompt override for inline completions                                              | `You are a precise code completion engine. Return only the completion with no markdown or explanation.` |
+| `cloudflareCopilot.completionExcludedLanguages`    | Language IDs that should not receive inline completions                                             | `["plaintext", "markdown", "json", "jsonc", "log"]`                                                     |
+| `cloudflareCopilot.capabilityOverrides`            | JSON object overriding default model capabilities by model handle                                   | `{}`                                                                                                    |
 
 `.vscode/settings.json`
 
