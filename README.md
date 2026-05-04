@@ -23,7 +23,7 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
 
 1. Install the extension
 2. Run **"Cloudflare: Store API Key Securely"** from the Command Palette (`Cmd/Ctrl+Shift+P`)
-3. Open VS Code Settings (`cloudflareCopilot`) and set:
+3. Open VS Code Settings (`cloudflareCopilot`) or add entries in `.vscode/settings.json` and set:
    - `cloudflareCopilot.accountId` — your Cloudflare Account ID
      - `cloudflareCopilot.gatewayId` — _(optional)_ your AI Gateway ID if you want a specific gateway instead of the default compat gateway
      - `cloudflareCopilot.includeGatewaySupportedModels` — include provider-prefixed AI Gateway models in discovery
@@ -55,17 +55,67 @@ Example manual model configuration:
 
 ## Settings
 
-| Setting                                            | Description                                        | Default           |
-| -------------------------------------------------- | -------------------------------------------------- | ----------------- |
-| `cloudflareCopilot.accountId`                      | Cloudflare Account ID                              | —                 |
-| `cloudflareCopilot.apiKey`                         | API Key (prefer secret storage)                    | —                 |
-| `cloudflareCopilot.gatewayId`                      | Optional specific AI Gateway ID for compat routing | —                 |
-| `cloudflareCopilot.includeGatewaySupportedModels`  | Include AI Gateway supported-model discovery       | `true`            |
-| `cloudflareCopilot.gatewaySupportedModelProviders` | Optional allowlist for AI Gateway providers        | `[]`              |
-| `cloudflareCopilot.manualModels`                   | Optional explicit model registrations              | `[]`              |
-| `cloudflareCopilot.modelFilter`                    | `Text Generation` or `all`                         | `Text Generation` |
-| `cloudflareCopilot.completionModel`                | Optional inline completion model override          | `""`              |
-| `cloudflareCopilot.capabilityOverrides`            | JSON object overriding default model capabilities  | `{}`              |
+| Setting                                            | Description                                                       | Default                                                                                                 |
+| -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `cloudflareCopilot.accountId`                      | Cloudflare Account ID                                             | —                                                                                                       |
+| `cloudflareCopilot.apiKey`                         | API key. Prefer the command-backed secret storage instead.        | —                                                                                                       |
+| `cloudflareCopilot.gatewayId`                      | Optional specific AI Gateway ID for compat routing                | —                                                                                                       |
+| `cloudflareCopilot.includeGatewaySupportedModels`  | Include AI Gateway supported-model discovery                      | `true`                                                                                                  |
+| `cloudflareCopilot.gatewaySupportedModelProviders` | Optional allowlist for AI Gateway providers                       | `[]`                                                                                                    |
+| `cloudflareCopilot.manualModels`                   | Optional explicit model registrations                             | `[]`                                                                                                    |
+| `cloudflareCopilot.modelFilter`                    | Which discovered Cloudflare model types to surface                | `Text Generation`                                                                                       |
+| `cloudflareCopilot.completionModel`                | Optional inline completion model override                         | `""`                                                                                                    |
+| `cloudflareCopilot.completionSystemPrompt`         | Optional system prompt override for inline completions            | `You are a precise code completion engine. Return only the completion with no markdown or explanation.` |
+| `cloudflareCopilot.completionExcludedLanguages`    | Language IDs that should not receive inline completions           | `["plaintext", "markdown", "json", "jsonc", "log"]`                                                     |
+| `cloudflareCopilot.capabilityOverrides`            | JSON object overriding default model capabilities by model handle | `{}`                                                                                                    |
+
+`.vscode/settings.json`
+
+```jsonc
+{
+  "cloudflareCopilot.accountId": "your-account-id",
+  // Prefer the "Cloudflare: Store Credentials" command instead of plain-text settings.
+  "cloudflareCopilot.apiKey": "your-api-key",
+  "cloudflareCopilot.gatewayId": "your-gateway-id",
+  "cloudflareCopilot.includeGatewaySupportedModels": true,
+  "cloudflareCopilot.gatewaySupportedModelProviders": ["openai", "anthropic", "google-ai-studio"],
+  "cloudflareCopilot.manualModels": [
+    {
+      "model": "openai/gpt-5-mini",
+      "name": "GPT-5 Mini",
+      "description": "Pinned compat model",
+      "task": "Text Generation",
+      "capabilities": {
+        "toolCalling": true,
+        "structuredOutput": true,
+        "reasoning": true,
+      },
+    },
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    },
+  ],
+  "cloudflareCopilot.modelFilter": "all",
+  "cloudflareCopilot.completionModel": "@cf/qwen/qwen2.5-coder-32b-instruct",
+  "cloudflareCopilot.completionSystemPrompt": "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
+  "cloudflareCopilot.completionExcludedLanguages": [
+    "plaintext",
+    "markdown",
+    "json",
+    "jsonc",
+    "log",
+  ],
+  "cloudflareCopilot.capabilityOverrides": {
+    "openai/gpt-5-mini": {
+      "toolCalling": true,
+      "structuredOutput": true,
+    },
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast": {
+      "reasoning": true,
+    },
+  },
+}
+```
 
 ## Architecture
 
