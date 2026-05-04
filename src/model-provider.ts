@@ -92,17 +92,21 @@ const BASE_TOOL_SCHEMA_TOKEN_OVERHEAD = 8;
 const TOOL_SCHEMA_TOKEN_MULTIPLIER = 1.1;
 const MIN_IMAGE_TOKEN_COST = 64;
 const TOKENS_PER_IMAGE_KIB = 64;
-const INPUT_TOKEN_PROPERTY_HINTS = [
+const EXPLICIT_INPUT_TOKEN_PROPERTY_HINTS = [
+  "max_input_length",
+  "max input length",
+  "max_input_tokens",
+  "max input tokens",
+  "input token limit",
+  "max_sequence_length",
+  "max sequence length",
+];
+const CONTEXT_WINDOW_PROPERTY_HINTS = [
   "context window",
   "context_window",
   "context length",
   "context_length",
-  "max_input_tokens",
-  "max input tokens",
-  "input token limit",
   "context tokens",
-  "max_sequence_length",
-  "max sequence length",
 ];
 const OUTPUT_TOKEN_PROPERTY_HINTS = [
   "max_output_tokens",
@@ -267,6 +271,7 @@ function parseTokenNumber(value: unknown): number | undefined {
 function findTokenLimitFromProperties(
   model: CloudflareModel,
   propertyHints: readonly string[],
+  strategy: "min" | "max" = "max",
 ): number | undefined {
   if (!model.properties || model.properties.length === 0) {
     return undefined;
@@ -282,7 +287,11 @@ function findTokenLimitFromProperties(
     .map((property) => parseTokenNumber(property.value))
     .filter((candidate): candidate is number => candidate !== undefined);
 
-  return candidates.length > 0 ? Math.max(...candidates) : undefined;
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  return strategy === "min" ? Math.min(...candidates) : Math.max(...candidates);
 }
 
 function findTokenLimitFromDescription(
@@ -314,8 +323,16 @@ function resolveModelTokenLimits(
   model: CloudflareModel,
   capabilities: vscode.LanguageModelChatCapabilities,
 ): ResolvedModelTokenLimits {
+  const explicitInputLimit = findTokenLimitFromProperties(
+    model,
+    EXPLICIT_INPUT_TOKEN_PROPERTY_HINTS,
+    "min",
+  );
+  const contextWindowLimit = findTokenLimitFromProperties(model, CONTEXT_WINDOW_PROPERTY_HINTS);
   const rawMaxInputTokens =
-    findTokenLimitFromProperties(model, INPUT_TOKEN_PROPERTY_HINTS) ??
+    (explicitInputLimit !== undefined && contextWindowLimit !== undefined
+      ? Math.min(explicitInputLimit, contextWindowLimit)
+      : (explicitInputLimit ?? contextWindowLimit)) ??
     findTokenLimitFromDescription(model, "input") ??
     FALLBACK_MAX_INPUT_TOKENS;
   const maxOutputTokens =

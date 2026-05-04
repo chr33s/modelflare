@@ -577,6 +577,55 @@ suite("model-provider", () => {
       }
     });
 
+    test("prefers explicit max_input_tokens over a larger context window", () => {
+      const provider = registerModelProvider(mockContext);
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              properties: [
+                { property_id: "context_window", value: "153600" },
+                { property_id: "max_input_tokens", value: "512" },
+              ],
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.maxInputTokens, 492);
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("prefers max_input_length over total context window", () => {
+      const provider = registerModelProvider(mockContext);
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              properties: [
+                { property_id: "context_window", value: "4096" },
+                { property_id: "max_input_length", value: "3072" },
+                { property_id: "max_total_tokens", value: "4096" },
+              ],
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.maxInputTokens, 3052);
+      } finally {
+        provider.dispose();
+      }
+    });
+
     test("counts message overhead for text and data parts", async () => {
       const provider = registerModelProvider(mockContext);
       const tokenSource = new vscode.CancellationTokenSource();

@@ -274,10 +274,10 @@ function getModelLoadSuccessMessage(modelCount: number, options: LoadModelsOptio
   const suffix = modelCount === 1 ? "" : "s";
 
   if (options.cachePolicy === "refresh") {
-    return `✅ Cloudflare: ${modelCount} model${suffix} refreshed in Copilot Chat`;
+    return `Cloudflare: ${modelCount} model${suffix} refreshed in Copilot Chat`;
   }
 
-  return `✅ Cloudflare: ${modelCount} model${suffix} registered in Copilot Chat`;
+  return `Cloudflare: ${modelCount} model${suffix} registered in Copilot Chat`;
 }
 
 export async function synchronizeCloudflareModelPicker(
