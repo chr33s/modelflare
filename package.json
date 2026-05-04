@@ -1,7 +1,7 @@
 {
   "name": "cloudflare-copilot-models",
   "displayName": "Cloudflare Models for Copilot",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Automatically surfaces all Cloudflare Workers AI models in VS Code Copilot Chat",
   "categories": [
     "AI",
@@ -105,6 +105,13 @@
                 "type": "string",
                 "description": "Optional task label. Defaults to a handle-based heuristic."
               },
+              "reasoningEffortLevels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Optional supported Think Effort values for this model, such as [\"low\", \"medium\", \"high\"]. When present, VS Code can surface a per-model Think Effort picker."
+              },
               "capabilities": {
                 "type": "object",
                 "additionalProperties": false,
@@ -153,6 +160,11 @@
           "type": "string",
           "default": "",
           "description": "Optional model handle, name, or id to use for inline completions. When unset, the extension picks a Text Generation model using completion-focused heuristics."
+        },
+        "cloudflareCopilot.reasoningEffort": {
+          "type": "string",
+          "default": "",
+          "description": "Optional fallback reasoning effort forwarded to reasoning-capable models when no per-model Think Effort selection is available. Leave empty to omit it. Common values include low, medium, and high."
         },
         "cloudflareCopilot.completionSystemPrompt": {
           "type": "string",

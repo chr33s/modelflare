@@ -143,6 +143,7 @@ interface RequestCloudflareChatTextOptions {
   modelHandle: string;
   state: CloudflareRequestState;
   messages: readonly CloudflareChatMessage[];
+  reasoningEffort?: string;
   tools?: readonly CloudflareToolDefinition[];
   toolChoice?: CloudflareToolChoiceMode;
   token: vscode.CancellationToken;
@@ -1483,6 +1484,10 @@ async function requestCloudflareEndpoint(
     body.tools = options.tools;
     body.tool_choice = options.toolChoice ?? "auto";
     body.parallel_tool_calls = true;
+  }
+
+  if (options.reasoningEffort) {
+    body.reasoning_effort = options.reasoningEffort;
   }
 
   if (options.stream) {

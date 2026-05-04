@@ -14,6 +14,7 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
 - 🔃 Manual refresh via command palette
 - 🔎 Inspect which models discovery returned, which models were registered, and which models VS Code actually exposes through the LM API
 - 🛠 Detects tool-calling, image-input, structured-output, reasoning, and audio capabilities from Cloudflare model schemas when available
+- 🧠 Surfaces a per-model **Think Effort** picker in current VS Code builds when a model exposes supported reasoning effort levels, including heuristic `low`/`medium`/`high` levels for common AI Gateway reasoning models
 - ✨ Inline code completions powered by discovered Cloudflare text generation models with specific Fill-In-The-Middle (FIM) templates for Qwen and DeepSeek models
 - 🛡️ High resilience with exponential backoff on HTTP 429/5xx errors
 - 📈 Persistent local telemetry tracking request counts and tokens across workspace reloads
@@ -30,8 +31,11 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
      - `cloudflareCopilot.gatewaySupportedModelProviders` — _(optional)_ allowlist specific compat providers such as `openai`, `anthropic`, or `google-ai-studio`
      - `cloudflareCopilot.manualModels` — _(optional)_ register exact model handles manually
    - `cloudflareCopilot.completionModel` — _(optional)_ model handle, name, or id to pin for inline completions
+   - `cloudflareCopilot.reasoningEffort` — _(optional)_ fallback reasoning effort such as `low`, `medium`, or `high` when a model does not expose a per-model **Think Effort** picker
 4. Models will appear automatically in the **Copilot Chat model picker** and are also used for inline code completions
 5. Run **"Cloudflare: Refresh Models"** any time you want to bypass the cached model list and fetch the latest catalog for the current account
+
+Auto-discovered AI Gateway compat models that the extension heuristically classifies as reasoning-capable currently receive a generic `low` / `medium` / `high` Think Effort picker. If you need exact per-model values, override them with `cloudflareCopilot.manualModels[].reasoningEffortLevels`.
 
 Example manual model configuration:
 
@@ -41,7 +45,9 @@ Example manual model configuration:
     {
       "model": "openai/gpt-5-mini",
       "name": "GPT-5 Mini",
+      "reasoningEffortLevels": ["low", "medium", "high"],
       "capabilities": {
+        "reasoning": true,
         "toolCalling": true,
         "structuredOutput": true
       }
@@ -65,6 +71,7 @@ Example manual model configuration:
 | `cloudflareCopilot.manualModels`                   | Optional explicit model registrations                                                               | `[]`                                                                                                    |
 | `cloudflareCopilot.modelFilter`                    | Which Cloudflare discovery filter to apply (`all`, `latest`, `latest-stable`, or `text-generation`) | `text-generation`                                                                                       |
 | `cloudflareCopilot.completionModel`                | Optional inline completion model override                                                           | `""`                                                                                                    |
+| `cloudflareCopilot.reasoningEffort`                | Optional fallback reasoning effort when no per-model Think Effort selection is available            | `""`                                                                                                    |
 | `cloudflareCopilot.completionSystemPrompt`         | Optional system prompt override for inline completions                                              | `You are a precise code completion engine. Return only the completion with no markdown or explanation.` |
 | `cloudflareCopilot.completionExcludedLanguages`    | Language IDs that should not receive inline completions                                             | `["plaintext", "markdown", "json", "jsonc", "log"]`                                                     |
 | `cloudflareCopilot.capabilityOverrides`            | JSON object overriding default model capabilities by model handle                                   | `{}`                                                                                                    |
@@ -85,6 +92,7 @@ Example manual model configuration:
       "name": "GPT-5 Mini",
       "description": "Pinned compat model",
       "task": "Text Generation",
+      "reasoningEffortLevels": ["low", "medium", "high"],
       "capabilities": {
         "toolCalling": true,
         "structuredOutput": true,
@@ -97,6 +105,7 @@ Example manual model configuration:
   ],
   "cloudflareCopilot.modelFilter": "all",
   "cloudflareCopilot.completionModel": "@cf/qwen/qwen2.5-coder-32b-instruct",
+  "cloudflareCopilot.reasoningEffort": "medium",
   "cloudflareCopilot.completionSystemPrompt": "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
   "cloudflareCopilot.completionExcludedLanguages": [
     "plaintext",

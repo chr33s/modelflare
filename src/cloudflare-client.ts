@@ -1,5 +1,6 @@
 import {
   detectCloudflareCapabilitiesFromSchema,
+  detectCloudflareReasoningEffortLevelsFromSchema,
   readManualCloudflareModelCapabilities,
   type CloudflareDetectedCapabilities,
 } from "./cloudflare-model-capabilities";
@@ -29,6 +30,7 @@ export interface CloudflareModel {
   };
   properties?: Array<{ property_id: string; value: unknown }>;
   detectedCapabilities?: CloudflareDetectedCapabilities;
+  reasoningEffortLevels?: readonly string[];
 }
 
 export interface CloudflareModelPickerCategory {
@@ -45,6 +47,7 @@ export interface ManualCloudflareModelConfig {
   description?: string;
   task?: string;
   capabilities?: Partial<CloudflareDetectedCapabilities>;
+  reasoningEffortLevels?: readonly string[];
 }
 
 interface CloudflareModelsResponse {
@@ -140,6 +143,7 @@ const GATEWAY_REASONING_HINTS = [
   "r1",
   "opus",
 ];
+const COMPAT_REASONING_EFFORT_LEVELS = ["low", "medium", "high"] as const;
 const GATEWAY_VISION_HINTS = [
   "vision",
   "multimodal",
@@ -282,7 +286,7 @@ function inferCompatModelCapabilities(
     structuredOutput: true,
   };
 
-  if (hasGatewayHint(normalizedHandle, GATEWAY_REASONING_HINTS)) {
+  if (inferCompatReasoningEffortLevels(modelHandle, taskName)) {
     capabilities.reasoning = true;
   }
 
@@ -291,6 +295,19 @@ function inferCompatModelCapabilities(
   }
 
   return capabilities;
+}
+
+function inferCompatReasoningEffortLevels(
+  modelHandle: string,
+  taskName: string,
+): readonly string[] | undefined {
+  if (taskName !== TEXT_GENERATION_TASK_NAME) {
+    return undefined;
+  }
+
+  return hasGatewayHint(modelHandle.toLowerCase(), GATEWAY_REASONING_HINTS)
+    ? COMPAT_REASONING_EFFORT_LEVELS
+    : undefined;
 }
 
 function toNormalizedWorkersAiModel(model: CloudflareModel): CloudflareModel {
@@ -311,6 +328,7 @@ function buildAiGatewayModel(
 ): CloudflareModel {
   const taskName = inferAiGatewayTaskName(modelId);
   const modelHandle = `${providerId}/${modelId}`;
+  const reasoningEffortLevels = inferCompatReasoningEffortLevels(modelHandle, taskName);
 
   return {
     id: modelHandle,
@@ -327,6 +345,7 @@ function buildAiGatewayModel(
       name: taskName,
     },
     detectedCapabilities: inferCompatModelCapabilities(modelHandle, taskName),
+    reasoningEffortLevels,
   };
 }
 
@@ -441,7 +460,35 @@ export function parseManualCloudflareModels(entries: readonly unknown[] | undefi
     const inferredCapabilities = isCloudflareCompatModelHandle(modelHandle)
       ? inferCompatModelCapabilities(modelHandle, taskName)
       : undefined;
+    const inferredReasoningEffortLevels = isCloudflareCompatModelHandle(modelHandle)
+      ? inferCompatReasoningEffortLevels(modelHandle, taskName)
+      : undefined;
     const explicitCapabilities = readManualCloudflareModelCapabilities(entryRecord.capabilities);
+    const parsedReasoningEffortLevels = Array.isArray(entryRecord.reasoningEffortLevels)
+      ? [
+          ...new Set(
+            entryRecord.reasoningEffortLevels
+              .filter((level): level is string => typeof level === "string")
+              .map((level) => level.trim())
+              .filter((level) => level.length > 0),
+          ),
+        ]
+      : entryRecord.reasoningEffortLevels === undefined
+        ? undefined
+        : [];
+    const reasoningEffortLevels =
+      parsedReasoningEffortLevels === undefined
+        ? inferredReasoningEffortLevels
+        : parsedReasoningEffortLevels;
+    if (
+      entryRecord.reasoningEffortLevels !== undefined &&
+      (!Array.isArray(entryRecord.reasoningEffortLevels) ||
+        (parsedReasoningEffortLevels !== undefined && parsedReasoningEffortLevels.length === 0))
+    ) {
+      warnings.push(
+        `manualModels[${index}].reasoningEffortLevels must be an array of non-empty strings.`,
+      );
+    }
     const modelName =
       typeof entryRecord.name === "string" && entryRecord.name.trim().length > 0
         ? entryRecord.name.trim()
@@ -465,7 +512,9 @@ export function parseManualCloudflareModels(entries: readonly unknown[] | undefi
       detectedCapabilities: {
         ...inferredCapabilities,
         ...explicitCapabilities,
+        ...(reasoningEffortLevels && reasoningEffortLevels.length > 0 ? { reasoning: true } : {}),
       },
+      reasoningEffortLevels,
     });
   }
 
@@ -885,17 +934,33 @@ async function detectModelCapabilities(
   accountId: string,
   apiKey: string,
   modelHandle: string,
-  capabilityCache: Map<string, CloudflareDetectedCapabilities | undefined>,
-): Promise<CloudflareDetectedCapabilities | undefined> {
+  capabilityCache: Map<
+    string,
+    | {
+        detectedCapabilities: CloudflareDetectedCapabilities;
+        reasoningEffortLevels?: readonly string[];
+      }
+    | undefined
+  >,
+): Promise<
+  | {
+      detectedCapabilities: CloudflareDetectedCapabilities;
+      reasoningEffortLevels?: readonly string[];
+    }
+  | undefined
+> {
   if (capabilityCache.has(modelHandle)) {
     return capabilityCache.get(modelHandle);
   }
 
   try {
     const schema = await fetchCloudflareModelSchema(accountId, apiKey, modelHandle);
-    const detectedCapabilities = detectCloudflareCapabilitiesFromSchema(schema);
-    capabilityCache.set(modelHandle, detectedCapabilities);
-    return detectedCapabilities;
+    const result = {
+      detectedCapabilities: detectCloudflareCapabilitiesFromSchema(schema),
+      reasoningEffortLevels: detectCloudflareReasoningEffortLevelsFromSchema(schema),
+    };
+    capabilityCache.set(modelHandle, result);
+    return result;
   } catch {
     capabilityCache.set(modelHandle, undefined);
     return undefined;
@@ -908,7 +973,14 @@ export async function enrichCloudflareModelsWithCapabilities(
   models: CloudflareModel[],
   overrides: Record<string, Partial<CloudflareDetectedCapabilities>> = {},
 ): Promise<CloudflareModel[]> {
-  const capabilityCache = new Map<string, CloudflareDetectedCapabilities | undefined>();
+  const capabilityCache = new Map<
+    string,
+    | {
+        detectedCapabilities: CloudflareDetectedCapabilities;
+        reasoningEffortLevels?: readonly string[];
+      }
+    | undefined
+  >();
   const enrichedModels = models.map((model) => {
     const handle = getCloudflareModelHandle(model);
     const modelOverrides = overrides[handle] || {};
@@ -949,9 +1021,13 @@ export async function enrichCloudflareModelsWithCapabilities(
       const currentOverrides = overrides[handle] || {};
       enrichedModels[result.modelIndex].detectedCapabilities = {
         ...enrichedModels[result.modelIndex].detectedCapabilities,
-        ...result.detectedCapabilities,
+        ...result.detectedCapabilities.detectedCapabilities,
         ...currentOverrides,
       };
+      if (result.detectedCapabilities.reasoningEffortLevels?.length) {
+        enrichedModels[result.modelIndex].reasoningEffortLevels =
+          result.detectedCapabilities.reasoningEffortLevels;
+      }
     }
   }
 

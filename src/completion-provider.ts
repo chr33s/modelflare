@@ -46,6 +46,7 @@ async function fetchCompletion(
   state: CloudflareRequestState,
   systemPrompt: string,
   prompt: string,
+  reasoningEffort: string | undefined,
   token: vscode.CancellationToken,
 ): Promise<string> {
   const text = await requestCloudflareChatText(context, {
@@ -61,6 +62,7 @@ async function fetchCompletion(
         content: prompt,
       },
     ],
+    reasoningEffort,
     token,
     errorLabel: "completion",
     trimEnd: true,
@@ -84,6 +86,9 @@ export function registerCompletionProvider(
 
   const completionModelHandle = getCloudflareModelHandle(completionModel);
   const completionSystemPrompt = getCloudflareCopilotConfiguration().completionSystemPrompt;
+  const completionReasoningEffort = completionModel.detectedCapabilities?.reasoning
+    ? getCloudflareCopilotConfiguration().reasoningEffort
+    : undefined;
   const excludedLanguageIds = getCompletionExcludedLanguageSet();
   const state: CloudflareRequestState = { accountId, apiKey, gatewayId };
 
@@ -108,6 +113,7 @@ export function registerCompletionProvider(
           state,
           completionSystemPrompt,
           prompt,
+          completionReasoningEffort,
           token,
         );
         if (!completionText || token.isCancellationRequested) {

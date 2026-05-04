@@ -5,6 +5,7 @@ import {
   getModelDisplayName,
   getModelDetail,
   registerModelProvider,
+  resolveCloudflareReasoningEffort,
   toCloudflareMessages,
   toCloudflareTools,
   toCloudflareToolChoice,
@@ -249,6 +250,75 @@ suite("model-provider", () => {
       } finally {
         provider.dispose();
       }
+    });
+
+    test("adds a Think Effort picker when the model exposes effort levels", () => {
+      const provider = registerModelProvider(mockContext);
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              id: "reasoning-id",
+              name: "openai/gpt-5-mini",
+              task: { id: "t", name: "Text Generation" },
+              detectedCapabilities: { reasoning: true },
+              reasoningEffortLevels: ["low", "medium", "high"],
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.deepStrictEqual(model.configurationSchema?.properties?.reasoningEffort.enum, [
+          "low",
+          "medium",
+          "high",
+        ]);
+        assert.strictEqual(
+          model.configurationSchema?.properties?.reasoningEffort.default,
+          "medium",
+        );
+      } finally {
+        provider.dispose();
+      }
+    });
+  });
+
+  suite("resolveCloudflareReasoningEffort", () => {
+    test("prefers modelConfiguration over request modelOptions and global fallback", () => {
+      const effort = resolveCloudflareReasoningEffort(
+        {
+          detectedCapabilities: { reasoning: true },
+          reasoningEffortLevels: ["low", "medium", "high"],
+        },
+        {
+          toolMode: vscode.LanguageModelChatToolMode.Auto,
+          modelOptions: { reasoningEffort: "low" },
+          modelConfiguration: { reasoningEffort: "high" },
+        } as unknown as vscode.ProvideLanguageModelChatResponseOptions,
+        "medium",
+      );
+
+      assert.strictEqual(effort, "high");
+    });
+
+    test("ignores unsupported values when the model exposes explicit levels", () => {
+      const effort = resolveCloudflareReasoningEffort(
+        {
+          detectedCapabilities: { reasoning: true },
+          reasoningEffortLevels: ["low", "medium", "high"],
+        },
+        {
+          toolMode: vscode.LanguageModelChatToolMode.Auto,
+          modelOptions: { reasoning_effort: "low" },
+          modelConfiguration: { reasoningEffort: "xhigh" },
+        } as unknown as vscode.ProvideLanguageModelChatResponseOptions,
+        "max",
+      );
+
+      assert.strictEqual(effort, "low");
     });
   });
 

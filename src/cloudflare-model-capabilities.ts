@@ -109,6 +109,26 @@ function schemaContainsEnumValue(value: unknown, enumValues: ReadonlySet<string>
   return Object.values(record).some((child) => schemaContainsEnumValue(child, enumValues));
 }
 
+function collectSchemaEnumValues(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectSchemaEnumValues(item));
+  }
+
+  const record = getObjectRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  const enumCandidates = Array.isArray(record.enum)
+    ? record.enum.filter((candidate): candidate is string => typeof candidate === "string")
+    : [];
+
+  return [
+    ...enumCandidates,
+    ...Object.values(record).flatMap((child) => collectSchemaEnumValues(child)),
+  ];
+}
+
 function getMessageContentSchemas(inputSchema: unknown): unknown[] {
   return findPropertySchemas(inputSchema, new Set(["messages"])).flatMap((messageSchema) =>
     findPropertySchemas(messageSchema, new Set(["content"])),
@@ -131,6 +151,16 @@ function modalitiesSupportAudioOutput(inputSchema: unknown): boolean {
   return findPropertySchemas(inputSchema, new Set(["modalities"])).some((schema) =>
     schemaContainsEnumValue(schema, new Set(["audio"])),
   );
+}
+
+function getReasoningEffortLevels(inputSchema: unknown): readonly string[] | undefined {
+  const levels = findPropertySchemas(inputSchema, new Set(["reasoning_effort"]))
+    .flatMap((schema) => collectSchemaEnumValues(schema))
+    .map((level) => level.trim())
+    .filter((level) => level.length > 0);
+  const dedupedLevels = [...new Set(levels)];
+
+  return dedupedLevels.length > 0 ? dedupedLevels : undefined;
 }
 
 export function getCloudflareSchemaResult(schema: unknown): unknown {
@@ -198,6 +228,15 @@ export function detectCloudflareCapabilitiesFromSchema(
       detector.detect(inputSchema, outputSchema),
     ]),
   ) as CloudflareDetectedCapabilities;
+}
+
+export function detectCloudflareReasoningEffortLevelsFromSchema(
+  schema: unknown,
+): readonly string[] | undefined {
+  const schemaResult = getCloudflareSchemaResult(schema);
+  const inputSchema = getCloudflareSchemaSection(schemaResult, "input");
+
+  return getReasoningEffortLevels(inputSchema);
 }
 
 export function readManualCloudflareModelCapabilities(

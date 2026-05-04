@@ -282,7 +282,10 @@ suite("cloudflare-client", () => {
         ["openai/gpt-5-mini", "google-ai-studio/gemini-2.5-flash", "anthropic/claude-sonnet-4-5"],
       );
       assert.strictEqual(result[0]?.detectedCapabilities?.toolCalling, true);
+      assert.deepStrictEqual(result[0]?.reasoningEffortLevels, ["low", "medium", "high"]);
       assert.strictEqual(result[1]?.provider?.name, "Google AI Studio");
+      assert.deepStrictEqual(result[1]?.reasoningEffortLevels, ["low", "medium", "high"]);
+      assert.deepStrictEqual(result[2]?.reasoningEffortLevels, ["low", "medium", "high"]);
     });
 
     test("respects provider allowlists and all-filter mode", async () => {
@@ -341,6 +344,7 @@ suite("cloudflare-client", () => {
           transport: model.transport,
           name: model.name,
           toolCalling: model.detectedCapabilities?.toolCalling,
+          reasoningEffortLevels: model.reasoningEffortLevels,
         })),
         [
           {
@@ -348,15 +352,25 @@ suite("cloudflare-client", () => {
             transport: "direct",
             name: "llama-3.3-70b-instruct-fp8-fast",
             toolCalling: undefined,
+            reasoningEffortLevels: undefined,
           },
           {
             handle: "openai/gpt-5-mini",
             transport: "compat",
             name: "GPT-5 Mini",
             toolCalling: false,
+            reasoningEffortLevels: ["low", "medium", "high"],
           },
         ],
       );
+      assert.deepStrictEqual(result.warnings, []);
+    });
+
+    test("infers compat reasoning effort levels when manual compat models omit them", () => {
+      const result = parseManualCloudflareModels([{ model: "anthropic/claude-sonnet-4-5" }]);
+
+      assert.deepStrictEqual(result.models[0]?.reasoningEffortLevels, ["low", "medium", "high"]);
+      assert.strictEqual(result.models[0]?.detectedCapabilities?.reasoning, true);
       assert.deepStrictEqual(result.warnings, []);
     });
 
@@ -365,6 +379,19 @@ suite("cloudflare-client", () => {
 
       assert.strictEqual(result.models.length, 0);
       assert.strictEqual(result.warnings.length, 2);
+    });
+
+    test("keeps manual reasoning effort levels and marks the model as reasoning-capable", () => {
+      const result = parseManualCloudflareModels([
+        {
+          model: "openai/gpt-5-mini",
+          reasoningEffortLevels: ["low", " medium ", "high"],
+        },
+      ]);
+
+      assert.deepStrictEqual(result.models[0].reasoningEffortLevels, ["low", "medium", "high"]);
+      assert.strictEqual(result.models[0].detectedCapabilities?.reasoning, true);
+      assert.deepStrictEqual(result.warnings, []);
     });
   });
 
@@ -595,6 +622,32 @@ suite("cloudflare-client", () => {
       const result = await enrichCloudflareModelsWithCapabilities("acct", "key", models);
 
       assert.strictEqual(result[0].detectedCapabilities?.reasoning, true);
+    });
+
+    test("extracts reasoning effort levels from reasoning_effort enum", async () => {
+      mockFetch(async (url) => {
+        if (url.toString().includes("models/schema")) {
+          return makeJsonResponse({
+            result: {
+              input: {
+                properties: {
+                  reasoning_effort: {
+                    anyOf: [{ type: "string", enum: ["low", "medium", "high"] }],
+                  },
+                  messages: { type: "array" },
+                },
+              },
+              output: {},
+            },
+          });
+        }
+        return makeJsonResponse({ success: true, result: [], errors: [] });
+      });
+
+      const models = [makeTextGenModel("reason-levels-uuid-5", "@cf/reason-levels-model")];
+      const result = await enrichCloudflareModelsWithCapabilities("acct", "key", models);
+
+      assert.deepStrictEqual(result[0].reasoningEffortLevels, ["low", "medium", "high"]);
     });
 
     test("detects structured output from response_format input property", async () => {

@@ -23,6 +23,7 @@ export interface CloudflareCopilotConfiguration {
   readonly gatewaySupportedModelProviders: readonly string[];
   readonly manualModels: readonly unknown[];
   readonly completionModel?: string;
+  readonly reasoningEffort?: string;
   readonly completionSystemPrompt: string;
   readonly completionExcludedLanguages: readonly string[];
   readonly capabilityOverrides: Record<string, Partial<CloudflareDetectedCapabilities>>;
@@ -45,6 +46,7 @@ export function getCloudflareCopilotConfiguration(): CloudflareCopilotConfigurat
       configuration.get<string[]>("gatewaySupportedModelProviders") ?? [],
     manualModels: configuration.get<unknown[]>("manualModels") ?? [],
     completionModel: configuration.get<string>("completionModel")?.trim() || undefined,
+    reasoningEffort: configuration.get<string>("reasoningEffort")?.trim() || undefined,
     completionSystemPrompt:
       configuration.get<string>("completionSystemPrompt")?.trim() ||
       DEFAULT_COMPLETION_SYSTEM_PROMPT,

@@ -209,6 +209,43 @@ suite("cloudflare-runtime", () => {
       assert.deepStrictEqual(capturedBody?.messages, messages);
     });
 
+    test("includes reasoning_effort in request body when provided", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      mockFetch(async (_url, init) => {
+        capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+        return makeJsonResponse({ result: { response: "ok" } });
+      });
+
+      await requestCloudflareChatText(mockContext, {
+        modelHandle: "openai/gpt-5-mini",
+        state: GATEWAY_STATE,
+        messages: MESSAGES,
+        reasoningEffort: "high",
+        token: makeActiveToken().token,
+        errorLabel: "test",
+      });
+
+      assert.strictEqual(capturedBody?.reasoning_effort, "high");
+    });
+
+    test("omits reasoning_effort from request body when undefined", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      mockFetch(async (_url, init) => {
+        capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+        return makeJsonResponse({ result: { response: "ok" } });
+      });
+
+      await requestCloudflareChatText(mockContext, {
+        modelHandle: "openai/gpt-5-mini",
+        state: GATEWAY_STATE,
+        messages: MESSAGES,
+        token: makeActiveToken().token,
+        errorLabel: "test",
+      });
+
+      assert.strictEqual(capturedBody?.reasoning_effort, undefined);
+    });
+
     test("includes tools, tool_choice, and parallel_tool_calls in body", async () => {
       let capturedBody: Record<string, unknown> | undefined;
       mockFetch(async (_url, init) => {

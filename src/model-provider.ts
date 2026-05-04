@@ -19,6 +19,7 @@ import {
   CloudflareToolDefinition,
   requestCloudflareChatResponse,
 } from "./cloudflare-runtime";
+import { getCloudflareCopilotConfiguration } from "./config";
 import { normalizeSearchText } from "./value-utils";
 
 interface ModelPickerCategory {
@@ -27,10 +28,32 @@ interface ModelPickerCategory {
   readonly showHeader?: boolean;
 }
 
+interface CloudflareLanguageModelConfigurationProperty {
+  readonly type: "string";
+  readonly title?: string;
+  readonly enum?: readonly string[];
+  readonly enumItemLabels?: readonly string[];
+  readonly enumDescriptions?: readonly string[];
+  readonly default?: string;
+  readonly group?: "navigation";
+}
+
+interface CloudflareLanguageModelConfigurationSchema {
+  readonly properties?: Record<string, CloudflareLanguageModelConfigurationProperty>;
+}
+
+interface CloudflareProvideLanguageModelChatResponseOptions
+  extends vscode.ProvideLanguageModelChatResponseOptions {
+  readonly modelConfiguration?: {
+    readonly reasoningEffort?: unknown;
+  };
+}
+
 interface CloudflareLanguageModelChatInformation extends vscode.LanguageModelChatInformation {
   readonly isUserSelectable?: boolean;
   readonly targetChatSessionType?: string;
   readonly category?: ModelPickerCategory;
+  readonly configurationSchema?: CloudflareLanguageModelConfigurationSchema;
 }
 
 interface ProviderModelInformation extends CloudflareLanguageModelChatInformation {
@@ -838,6 +861,101 @@ export function getModelDetail(
   return detail.length > 0 ? detail.join(" • ") : undefined;
 }
 
+function getReasoningEffortDescription(level: string): string {
+  switch (level) {
+    case "none":
+      return "No reasoning applied";
+    case "low":
+      return "Faster responses with less reasoning";
+    case "medium":
+      return "Balanced reasoning and speed";
+    case "high":
+      return "Greater reasoning depth but slower";
+    case "xhigh":
+      return "Maximum reasoning depth but slower";
+    case "max":
+      return "Absolute maximum capability with no constraints";
+    default:
+      return level;
+  }
+}
+
+function getReasoningEffortDefault(model: CloudflareModel): string | undefined {
+  const levels = model.reasoningEffortLevels ?? [];
+  if (levels.length === 0) {
+    return undefined;
+  }
+
+  const preferred = getCloudflareModelFamily(model).toLowerCase().includes("claude")
+    ? "high"
+    : "medium";
+
+  return levels.includes(preferred) ? preferred : undefined;
+}
+
+function buildReasoningEffortConfigurationSchema(
+  model: CloudflareModel,
+): CloudflareLanguageModelConfigurationSchema | undefined {
+  const levels = model.reasoningEffortLevels ?? [];
+  if (levels.length < 2) {
+    return undefined;
+  }
+
+  return {
+    properties: {
+      reasoningEffort: {
+        type: "string",
+        title: "Thinking Effort",
+        enum: levels,
+        enumItemLabels: levels.map((level) =>
+          level.length > 0 ? `${level[0].toUpperCase()}${level.slice(1)}` : level,
+        ),
+        enumDescriptions: levels.map((level) => getReasoningEffortDescription(level)),
+        default: getReasoningEffortDefault(model),
+        group: "navigation",
+      },
+    },
+  };
+}
+
+function normalizeReasoningEffortValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function supportsReasoningEffortValue(
+  model: Pick<CloudflareModel, "reasoningEffortLevels">,
+  value: string,
+): boolean {
+  return !model.reasoningEffortLevels || model.reasoningEffortLevels.includes(value);
+}
+
+export function resolveCloudflareReasoningEffort(
+  model: Pick<CloudflareModel, "detectedCapabilities" | "reasoningEffortLevels">,
+  options: vscode.ProvideLanguageModelChatResponseOptions,
+  configuredFallback: string | undefined,
+): string | undefined {
+  if (!model.detectedCapabilities?.reasoning && !model.reasoningEffortLevels?.length) {
+    return undefined;
+  }
+
+  const responseOptions = options as CloudflareProvideLanguageModelChatResponseOptions;
+  const candidates = [
+    responseOptions.modelConfiguration?.reasoningEffort,
+    options.modelOptions?.reasoningEffort,
+    options.modelOptions?.reasoning_effort,
+    configuredFallback,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeReasoningEffortValue(candidate);
+    if (normalized && supportsReasoningEffortValue(model, normalized)) {
+      return normalized;
+    }
+  }
+
+  return undefined;
+}
+
 function toProviderModelInformation(model: CloudflareModel): ProviderModelInformation {
   const modelHandle = getCloudflareModelHandle(model);
   const capabilities = inferCapabilities(model);
@@ -857,6 +975,7 @@ function toProviderModelInformation(model: CloudflareModel): ProviderModelInform
       label: category.label,
       order: category.order,
     },
+    configurationSchema: buildReasoningEffortConfigurationSchema(model),
     tooltip: model.description,
     detail: getModelDetail(model, capabilities),
     rawMaxInputTokens: tokenLimits.rawMaxInputTokens,
@@ -946,6 +1065,12 @@ class CloudflareModelProvider
       throw new Error(`Cloudflare model is not registered: ${model.id}`);
     }
 
+    const reasoningEffort = resolveCloudflareReasoningEffort(
+      cloudflareModel,
+      options,
+      getCloudflareCopilotConfiguration().reasoningEffort,
+    );
+
     const estimatedRequestTokens = estimateRequestTokens(model, messages, options.tools);
     if (estimatedRequestTokens > model.rawMaxInputTokens) {
       throw new Error(
@@ -958,6 +1083,7 @@ class CloudflareModelProvider
       modelHandle: getCloudflareModelHandle(cloudflareModel),
       state: this.state,
       messages: toCloudflareMessages(messages),
+      reasoningEffort,
       tools: toCloudflareTools(options.tools),
       toolChoice: toCloudflareToolChoice(options.toolMode, options.tools),
       token,
