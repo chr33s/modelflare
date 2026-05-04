@@ -1,3 +1,10 @@
+import {
+  detectCloudflareCapabilitiesFromSchema,
+  readManualCloudflareModelCapabilities,
+  type CloudflareDetectedCapabilities,
+} from "./cloudflare-model-capabilities";
+import { getObjectRecord, normalizeSearchText, parseJson } from "./value-utils";
+
 export interface CloudflareModel {
   id: string; // Cloudflare internal model UUID
   name?: string;
@@ -14,14 +21,7 @@ export interface CloudflareModel {
     description?: string;
   };
   properties?: Array<{ property_id: string; value: unknown }>;
-  detectedCapabilities?: {
-    toolCalling?: boolean;
-    imageInput?: boolean;
-    structuredOutput?: boolean;
-    reasoning?: boolean;
-    audioInput?: boolean;
-    audioOutput?: boolean;
-  };
+  detectedCapabilities?: CloudflareDetectedCapabilities;
 }
 
 export interface CloudflareModelPickerCategory {
@@ -32,14 +32,12 @@ export interface CloudflareModelPickerCategory {
 export type CloudflareModelSource = "workers-ai" | "ai-gateway" | "manual";
 export type CloudflareModelTransport = "direct" | "compat";
 
-type DetectedCloudflareModelCapabilities = NonNullable<CloudflareModel["detectedCapabilities"]>;
-
 export interface ManualCloudflareModelConfig {
   model: string;
   name?: string;
   description?: string;
   task?: string;
-  capabilities?: Partial<DetectedCloudflareModelCapabilities>;
+  capabilities?: Partial<CloudflareDetectedCapabilities>;
 }
 
 interface CloudflareModelsResponse {
@@ -63,23 +61,6 @@ const SCHEMA_BATCH_SIZE = 5;
 const MODEL_SEARCH_PAGE_SIZE = 100;
 const MAX_MODEL_SEARCH_PAGES = 20;
 const MAX_NORMALIZED_TEXT_LENGTH = 4096;
-const TOOL_CALLING_INPUT_PROPERTIES = new Set([
-  "tools",
-  "tool_choice",
-  "functions",
-  "function_call",
-  "parallel_tool_calls",
-]);
-const TOOL_CALLING_OUTPUT_PROPERTIES = new Set(["tool_calls"]);
-const REASONING_INPUT_PROPERTIES = new Set([
-  "reasoning_effort",
-  "chat_template_kwargs",
-  "enable_thinking",
-  "clear_thinking",
-]);
-const AUDIO_OUTPUT_INPUT_PROPERTIES = new Set(["audio", "modalities"]);
-const AUDIO_OUTPUT_OUTPUT_PROPERTIES = new Set(["audio"]);
-const STRUCTURED_OUTPUT_ENUM_VALUES = new Set(["json_object", "json_schema"]);
 const EXPERIMENTAL_MODEL_HINTS = ["experimental", "preview", "beta", "alpha"];
 const COMPLETION_MODEL_HINTS = ["code", "coder", "completion", "autocomplete"];
 const COMPLETION_CHAT_HINTS = ["instruct", "chat"];
@@ -273,13 +254,13 @@ function inferAiGatewayTaskName(modelId: string): string {
 function inferCompatModelCapabilities(
   modelHandle: string,
   taskName: string,
-): DetectedCloudflareModelCapabilities | undefined {
+): CloudflareDetectedCapabilities | undefined {
   if (taskName !== TEXT_GENERATION_TASK) {
     return undefined;
   }
 
   const normalizedHandle = modelHandle.toLowerCase();
-  const capabilities: DetectedCloudflareModelCapabilities = {
+  const capabilities: CloudflareDetectedCapabilities = {
     toolCalling: true,
     structuredOutput: true,
   };
@@ -410,32 +391,6 @@ function normalizeManualModelHandle(modelHandle: string): string | undefined {
   return normalizedHandle;
 }
 
-function readManualModelCapabilities(
-  value: unknown,
-): Partial<DetectedCloudflareModelCapabilities> | undefined {
-  const record = getObjectRecord(value);
-  if (!record) {
-    return undefined;
-  }
-
-  const capabilities: Partial<DetectedCloudflareModelCapabilities> = {};
-  for (const capabilityKey of [
-    "toolCalling",
-    "imageInput",
-    "structuredOutput",
-    "reasoning",
-    "audioInput",
-    "audioOutput",
-  ] as const) {
-    const capabilityValue = record[capabilityKey];
-    if (typeof capabilityValue === "boolean") {
-      capabilities[capabilityKey] = capabilityValue;
-    }
-  }
-
-  return Object.keys(capabilities).length > 0 ? capabilities : undefined;
-}
-
 export function parseManualCloudflareModels(entries: readonly unknown[] | undefined): {
   models: CloudflareModel[];
   warnings: string[];
@@ -468,7 +423,7 @@ export function parseManualCloudflareModels(entries: readonly unknown[] | undefi
     const inferredCapabilities = isCloudflareCompatModelHandle(modelHandle)
       ? inferCompatModelCapabilities(modelHandle, taskName)
       : undefined;
-    const explicitCapabilities = readManualModelCapabilities(entryRecord.capabilities);
+    const explicitCapabilities = readManualCloudflareModelCapabilities(entryRecord.capabilities);
     const modelName =
       typeof entryRecord.name === "string" && entryRecord.name.trim().length > 0
         ? entryRecord.name.trim()
@@ -506,23 +461,7 @@ function truncateNormalizedText(value: string): string {
 }
 
 function normalizeTextValue(value: unknown): string {
-  if (typeof value === "string") {
-    return truncateNormalizedText(value.toLowerCase());
-  }
-
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return truncateNormalizedText(value.toString().toLowerCase());
-  }
-
-  try {
-    return truncateNormalizedText(JSON.stringify(value)?.toLowerCase() ?? "");
-  } catch {
-    return "";
-  }
+  return truncateNormalizedText(normalizeSearchText(value));
 }
 
 function getCloudflareModelMetadataText(model: CloudflareModel): string {
@@ -897,144 +836,6 @@ export function selectCloudflareCompletionModel(
   })[0];
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function getObjectRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!isObject(value)) {
-    return undefined;
-  }
-
-  return value;
-}
-
-function getSchemaVariants(value: unknown): unknown[] {
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => getSchemaVariants(item));
-  }
-
-  const record = getObjectRecord(value);
-  if (!record) {
-    return [value];
-  }
-
-  const anyOf = Array.isArray(record.anyOf) ? record.anyOf : [];
-  const oneOf = Array.isArray(record.oneOf) ? record.oneOf : [];
-
-  if (anyOf.length === 0 && oneOf.length === 0) {
-    return [record];
-  }
-
-  const nestedVariants = [...anyOf, ...oneOf].flatMap((item) => getSchemaVariants(item));
-  return nestedVariants.length > 0 ? nestedVariants : [record];
-}
-
-function getSchemaProperties(value: unknown): Record<string, unknown>[] {
-  return getSchemaVariants(value)
-    .map((variant) => getObjectRecord(variant))
-    .flatMap((variant) => {
-      if (!variant) {
-        return [];
-      }
-
-      const properties = getObjectRecord(variant.properties);
-      return properties ? [properties] : [];
-    });
-}
-
-function findPropertySchemas(value: unknown, propertyNames: ReadonlySet<string>): unknown[] {
-  return getSchemaProperties(value).flatMap((properties) =>
-    Object.entries(properties)
-      .filter(([propertyName]) => propertyNames.has(propertyName))
-      .map(([, propertySchema]) => propertySchema),
-  );
-}
-
-function schemaContainsPropertyName(value: unknown, propertyNames: ReadonlySet<string>): boolean {
-  const variants = getSchemaVariants(value);
-
-  return variants.some((variant) => {
-    const record = getObjectRecord(variant);
-    if (!record) {
-      return false;
-    }
-
-    const properties = getObjectRecord(record.properties);
-    if (
-      properties &&
-      Object.keys(properties).some((propertyName) => propertyNames.has(propertyName))
-    ) {
-      return true;
-    }
-
-    return Object.values(record).some((child) => schemaContainsPropertyName(child, propertyNames));
-  });
-}
-
-function schemaContainsEnumValue(value: unknown, enumValues: ReadonlySet<string>): boolean {
-  if (Array.isArray(value)) {
-    return value.some((item) => schemaContainsEnumValue(item, enumValues));
-  }
-
-  const record = getObjectRecord(value);
-  if (!record) {
-    return false;
-  }
-
-  const enumCandidates = Array.isArray(record.enum)
-    ? record.enum.filter((candidate): candidate is string => typeof candidate === "string")
-    : [];
-
-  if (enumCandidates.some((candidate) => enumValues.has(candidate))) {
-    return true;
-  }
-
-  return Object.values(record).some((child) => schemaContainsEnumValue(child, enumValues));
-}
-
-function getSchemaSection(schemaResult: unknown, sectionName: "input" | "output"): unknown {
-  const record = getObjectRecord(schemaResult);
-  if (!record || !(sectionName in record)) {
-    return undefined;
-  }
-
-  return record[sectionName];
-}
-
-function getMessageContentSchemas(inputSchema: unknown): unknown[] {
-  const messageSchemas = findPropertySchemas(inputSchema, new Set(["messages"]));
-  return messageSchemas.flatMap((messageSchema) =>
-    findPropertySchemas(messageSchema, new Set(["content"])),
-  );
-}
-
-function messageContentSupportsType(inputSchema: unknown, messageType: string): boolean {
-  return getMessageContentSchemas(inputSchema).some((contentSchema) =>
-    schemaContainsEnumValue(contentSchema, new Set([messageType])),
-  );
-}
-
-function responseFormatSupportsStructuredOutput(inputSchema: unknown): boolean {
-  const responseFormatSchemas = findPropertySchemas(inputSchema, new Set(["response_format"]));
-  return responseFormatSchemas.some((schema) =>
-    schemaContainsEnumValue(schema, STRUCTURED_OUTPUT_ENUM_VALUES),
-  );
-}
-
-function modalitiesSupportAudioOutput(inputSchema: unknown): boolean {
-  const modalitiesSchemas = findPropertySchemas(inputSchema, new Set(["modalities"]));
-  return modalitiesSchemas.some((schema) => schemaContainsEnumValue(schema, new Set(["audio"])));
-}
-
-function getSchemaResult(schema: unknown): unknown {
-  if (!isObject(schema) || !("result" in schema)) {
-    return schema;
-  }
-
-  return schema.result;
-}
-
 async function fetchCloudflareModelSchema(
   accountId: string,
   apiKey: string,
@@ -1057,68 +858,22 @@ async function fetchCloudflareModelSchema(
     throw new Error(`Cloudflare schema request failed (${response.status}): ${raw}`);
   }
 
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    throw new Error(`Failed to parse Cloudflare model schema (${message}): ${raw}`);
-  }
-}
-
-function detectToolCallingSupport(inputSchema: unknown, outputSchema: unknown): boolean {
-  return (
-    schemaContainsPropertyName(inputSchema, TOOL_CALLING_INPUT_PROPERTIES) ||
-    schemaContainsPropertyName(outputSchema, TOOL_CALLING_OUTPUT_PROPERTIES)
-  );
-}
-
-function detectImageInputSupport(inputSchema: unknown): boolean {
-  return messageContentSupportsType(inputSchema, "image_url");
-}
-
-function detectStructuredOutputSupport(inputSchema: unknown): boolean {
-  return responseFormatSupportsStructuredOutput(inputSchema);
-}
-
-function detectReasoningSupport(inputSchema: unknown): boolean {
-  return schemaContainsPropertyName(inputSchema, REASONING_INPUT_PROPERTIES);
-}
-
-function detectAudioInputSupport(inputSchema: unknown): boolean {
-  return messageContentSupportsType(inputSchema, "input_audio");
-}
-
-function detectAudioOutputSupport(inputSchema: unknown, outputSchema: unknown): boolean {
-  return (
-    (schemaContainsPropertyName(inputSchema, AUDIO_OUTPUT_INPUT_PROPERTIES) &&
-      modalitiesSupportAudioOutput(inputSchema)) ||
-    schemaContainsPropertyName(outputSchema, AUDIO_OUTPUT_OUTPUT_PROPERTIES)
-  );
+  return parseJson(raw, "Failed to parse Cloudflare model schema");
 }
 
 async function detectModelCapabilities(
   accountId: string,
   apiKey: string,
   modelHandle: string,
-  capabilityCache: Map<string, DetectedCloudflareModelCapabilities | undefined>,
-): Promise<DetectedCloudflareModelCapabilities | undefined> {
+  capabilityCache: Map<string, CloudflareDetectedCapabilities | undefined>,
+): Promise<CloudflareDetectedCapabilities | undefined> {
   if (capabilityCache.has(modelHandle)) {
     return capabilityCache.get(modelHandle);
   }
 
   try {
     const schema = await fetchCloudflareModelSchema(accountId, apiKey, modelHandle);
-    const schemaResult = getSchemaResult(schema);
-    const inputSchema = getSchemaSection(schemaResult, "input");
-    const outputSchema = getSchemaSection(schemaResult, "output");
-    const detectedCapabilities = {
-      toolCalling: detectToolCallingSupport(inputSchema, outputSchema),
-      imageInput: detectImageInputSupport(inputSchema),
-      structuredOutput: detectStructuredOutputSupport(inputSchema),
-      reasoning: detectReasoningSupport(inputSchema),
-      audioInput: detectAudioInputSupport(inputSchema),
-      audioOutput: detectAudioOutputSupport(inputSchema, outputSchema),
-    };
+    const detectedCapabilities = detectCloudflareCapabilitiesFromSchema(schema);
     capabilityCache.set(modelHandle, detectedCapabilities);
     return detectedCapabilities;
   } catch {
@@ -1131,9 +886,9 @@ export async function enrichCloudflareModelsWithCapabilities(
   accountId: string,
   apiKey: string,
   models: CloudflareModel[],
-  overrides: Record<string, Partial<DetectedCloudflareModelCapabilities>> = {},
+  overrides: Record<string, Partial<CloudflareDetectedCapabilities>> = {},
 ): Promise<CloudflareModel[]> {
-  const capabilityCache = new Map<string, DetectedCloudflareModelCapabilities | undefined>();
+  const capabilityCache = new Map<string, CloudflareDetectedCapabilities | undefined>();
   const enrichedModels = models.map((model) => {
     const handle = getCloudflareModelHandle(model);
     const modelOverrides = overrides[handle] || {};
@@ -1213,13 +968,10 @@ export async function fetchCloudflareModels(
       throw new Error(`Cloudflare API request failed (${response.status}): ${raw}`);
     }
 
-    let json: CloudflareModelsResponse;
-    try {
-      json = JSON.parse(raw) as CloudflareModelsResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown error";
-      throw new Error(`Failed to parse Cloudflare models response (${message}): ${raw}`);
-    }
+    const json = parseJson(
+      raw,
+      "Failed to parse Cloudflare models response",
+    ) as CloudflareModelsResponse;
 
     if (!json.success) {
       const errMsg = json.errors?.map((e) => e.message).join(", ") ?? "Unknown error";

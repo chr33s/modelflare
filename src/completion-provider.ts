@@ -4,43 +4,11 @@ import {
   getCloudflareModelHandle,
   selectCloudflareCompletionModel,
 } from "./cloudflare-client";
+import { getCloudflareCopilotConfiguration, getCompletionExcludedLanguageSet } from "./config";
 import { CloudflareRequestState, requestCloudflareChatText } from "./cloudflare-runtime";
 
 const COMPLETION_PREFIX_LINES = 120;
 const COMPLETION_SUFFIX_LINES = 40;
-const DEFAULT_COMPLETION_SYSTEM_PROMPT =
-  "You are a precise code completion engine. Return only the completion with no markdown or explanation.";
-const DEFAULT_COMPLETION_EXCLUDED_LANGUAGE_IDS = [
-  "plaintext",
-  "markdown",
-  "json",
-  "jsonc",
-  "log",
-] as const;
-
-function getCompletionSystemPrompt(): string {
-  const configuredPrompt = vscode.workspace
-    .getConfiguration("cloudflareCopilot")
-    .get<string>("completionSystemPrompt")
-    ?.trim();
-
-  return configuredPrompt && configuredPrompt.length > 0
-    ? configuredPrompt
-    : DEFAULT_COMPLETION_SYSTEM_PROMPT;
-}
-
-function getCompletionExcludedLanguages(): ReadonlySet<string> {
-  const configuredLanguages = vscode.workspace
-    .getConfiguration("cloudflareCopilot")
-    .get<string[]>("completionExcludedLanguages");
-  const languageIds = configuredLanguages ?? [...DEFAULT_COMPLETION_EXCLUDED_LANGUAGE_IDS];
-
-  return new Set(
-    languageIds
-      .map((languageId) => languageId.trim())
-      .filter((languageId) => languageId.length > 0),
-  );
-}
 
 export function buildCompletionPrompt(
   modelHandle: string,
@@ -115,8 +83,8 @@ export function registerCompletionProvider(
   }
 
   const completionModelHandle = getCloudflareModelHandle(completionModel);
-  const completionSystemPrompt = getCompletionSystemPrompt();
-  const excludedLanguageIds = getCompletionExcludedLanguages();
+  const completionSystemPrompt = getCloudflareCopilotConfiguration().completionSystemPrompt;
+  const excludedLanguageIds = getCompletionExcludedLanguageSet();
   const state: CloudflareRequestState = { accountId, apiKey, gatewayId };
 
   return vscode.languages.registerInlineCompletionItemProvider(

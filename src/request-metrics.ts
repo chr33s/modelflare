@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { logCloudflareError } from "./logging";
 
 export interface RecordedCloudflareUsage {
   promptTokens?: number;
@@ -66,7 +67,7 @@ export function loadCloudflareRequestMetrics(context: vscode.ExtensionContext): 
       recordedRequestMetrics = stored;
     }
   } catch (err) {
-    console.error("Failed to load metrics telemetry", err);
+    logCloudflareError("Failed to load metrics telemetry", err);
   }
 }
 
@@ -79,11 +80,11 @@ export function saveCloudflareRequestMetrics(context: vscode.ExtensionContext): 
 
     if (updateResult) {
       void Promise.resolve(updateResult).catch((err: unknown) => {
-        console.error("Failed to save metrics telemetry", err);
+        logCloudflareError("Failed to save metrics telemetry", err);
       });
     }
   } catch (err) {
-    console.error("Failed to save metrics telemetry", err);
+    logCloudflareError("Failed to save metrics telemetry", err);
   }
 }
 

@@ -10,10 +10,9 @@ import {
   toCloudflareToolChoice,
 } from "./model-provider";
 import type { CloudflareModel } from "./cloudflare-client";
+import { createMockExtensionContext } from "./test-utils";
 
-const mockContext = {
-  workspaceState: { get: () => undefined, update: () => {} },
-} as unknown as vscode.ExtensionContext;
+const mockContext = createMockExtensionContext();
 
 // ---------------------------------------------------------------------------
 // Helpers

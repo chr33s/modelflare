@@ -1,6 +1,5 @@
 import * as assert from "assert";
 import type { CancellationToken } from "vscode";
-import * as vscode from "vscode";
 import {
   buildCloudflareEndpoint,
   requestCloudflareChatResponse,
@@ -10,51 +9,23 @@ import {
   clearCloudflareRequestMetrics,
   getRecentCloudflareRequestMetrics,
 } from "./request-metrics";
+import {
+  createMockExtensionContext,
+  makeJsonResponse,
+  makeSseResponse,
+  makeTextResponse,
+  mockFetch,
+  restoreGlobalFetch,
+  saveGlobalFetch,
+} from "./test-utils";
 import type {
   CloudflareRequestState,
   CloudflareChatMessage,
   CloudflareToolDefinition,
 } from "./cloudflare-runtime";
 
-const mockContext = {
-  workspaceState: {
-    get: () => undefined,
-    update: () => {},
-  },
-} as unknown as vscode.ExtensionContext;
-
-// ---------------------------------------------------------------------------
-// Fetch mock helpers
-// ---------------------------------------------------------------------------
-
-// oxlint-disable-next-line @typescript-eslint/no-explicit-any
-const g = globalThis as any;
+const mockContext = createMockExtensionContext();
 let savedFetch: typeof fetch;
-
-type MockFetchImpl = (url: string | URL, init?: RequestInit) => Promise<Response>;
-
-function mockFetch(impl: MockFetchImpl): void {
-  g.fetch = impl as typeof fetch;
-}
-
-function makeJsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function makeTextResponse(body: string, status = 200): Response {
-  return new Response(body, { status });
-}
-
-function makeSseResponse(events: string[], status = 200): Response {
-  const body = [...events.map((event) => `data: ${event}\n\n`), "data: [DONE]\n\n"].join("");
-  return new Response(body, {
-    status,
-    headers: { "Content-Type": "text/event-stream" },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // CancellationToken helpers
@@ -115,12 +86,12 @@ const MESSAGES: readonly CloudflareChatMessage[] = [{ role: "user", content: "He
 
 suite("cloudflare-runtime", () => {
   setup(() => {
-    savedFetch = g.fetch as typeof fetch;
+    savedFetch = saveGlobalFetch();
     clearCloudflareRequestMetrics();
   });
 
   teardown(() => {
-    g.fetch = savedFetch;
+    restoreGlobalFetch(savedFetch);
     clearCloudflareRequestMetrics();
   });
 

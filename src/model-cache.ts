@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import type { CloudflareModel } from "./cloudflare-client";
+import { logCloudflareError } from "./logging";
+import { computeStringFingerprint, stableSerialize } from "./value-utils";
 
 const MODEL_CACHE_STATE_KEY = "cloudflareCopilot.modelCache";
 const MODEL_CACHE_VERSION = 2;
@@ -41,49 +43,6 @@ function cloneCloudflareModels(models: readonly CloudflareModel[]): CloudflareMo
   }
 
   return JSON.parse(JSON.stringify(models)) as CloudflareModel[];
-}
-
-function stableSerializeForCache(value: unknown): string {
-  if (value === null) {
-    return "null";
-  }
-
-  if (value === undefined) {
-    return "null";
-  }
-
-  if (typeof value === "bigint") {
-    return JSON.stringify(value.toString());
-  }
-
-  if (typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableSerializeForCache(item)).join(",")}]`;
-  }
-
-  const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== undefined);
-  entries.sort(([left], [right]) => left.localeCompare(right));
-
-  return `{${entries
-    .map(
-      ([entryKey, entryValue]) =>
-        `${JSON.stringify(entryKey)}:${stableSerializeForCache(entryValue)}`,
-    )
-    .join(",")}}`;
-}
-
-function computeStringFingerprint(value: string): string {
-  let hash = 0x811c9dc5;
-
-  for (const char of value) {
-    hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-
-  return hash.toString(16).padStart(8, "0");
 }
 
 function isStoredCloudflareModelCacheEntry(
@@ -132,7 +91,7 @@ function loadStoredCloudflareModelCache(
       entries: stored.entries.filter((entry) => isStoredCloudflareModelCacheEntry(entry)),
     };
   } catch (error) {
-    console.error("Failed to load Cloudflare model cache", error);
+    logCloudflareError("Failed to load Cloudflare model cache", error);
     return getEmptyCloudflareModelCache();
   }
 }
@@ -149,11 +108,11 @@ function saveStoredCloudflareModelCache(
 
     if (updateResult) {
       void Promise.resolve(updateResult).catch((error: unknown) => {
-        console.error("Failed to save Cloudflare model cache", error);
+        logCloudflareError("Failed to save Cloudflare model cache", error);
       });
     }
   } catch (error) {
-    console.error("Failed to save Cloudflare model cache", error);
+    logCloudflareError("Failed to save Cloudflare model cache", error);
   }
 }
 
@@ -170,20 +129,18 @@ function getCloudflareModelCacheLookup(query: CloudflareModelCacheQuery): {
   const modelFilter = query.modelFilter;
   const apiKeyFingerprint = computeStringFingerprint(query.apiKey.trim());
   const gatewayCatalogDigest = computeStringFingerprint(
-    stableSerializeForCache({
+    stableSerialize({
       includeGatewaySupportedModels: query.includeGatewaySupportedModels ?? false,
       gatewaySupportedModelProviders: query.gatewaySupportedModelProviders ?? [],
     }),
   );
-  const manualModelsDigest = computeStringFingerprint(
-    stableSerializeForCache(query.manualModels ?? []),
-  );
+  const manualModelsDigest = computeStringFingerprint(stableSerialize(query.manualModels ?? []));
   const capabilityOverridesDigest = computeStringFingerprint(
-    stableSerializeForCache(query.capabilityOverrides ?? {}),
+    stableSerialize(query.capabilityOverrides ?? {}),
   );
 
   return {
-    key: stableSerializeForCache({
+    key: stableSerialize({
       accountId,
       modelFilter,
       apiKeyFingerprint,

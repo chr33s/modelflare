@@ -8,9 +8,17 @@ import {
   getCloudflareModelHandle,
   parseManualCloudflareModels,
 } from "./cloudflare-client";
+import { getCloudflareCopilotConfiguration } from "./config";
 import { registerModelProvider, RegisteredModelProvider } from "./model-provider";
 import { registerCompletionProvider } from "./completion-provider";
 import { loadCachedCloudflareModels, saveCachedCloudflareModels } from "./model-cache";
+import {
+  appendCloudflareLogLine,
+  clearCloudflareOutputChannel,
+  disposeCloudflareOutputChannel,
+  logCloudflareWarning,
+  showCloudflareOutputChannel,
+} from "./logging";
 import {
   getRecentCloudflareRequestMetrics,
   AggregatedCloudflareRequestMetric,
@@ -18,6 +26,7 @@ import {
   summarizeCloudflareRequestMetrics,
   loadCloudflareRequestMetrics,
 } from "./request-metrics";
+import { formatUnknownErrorMessage } from "./value-utils";
 
 const SECRET_KEY = "cloudflare-api-key";
 const VENDOR = "cloudflare";
@@ -25,7 +34,6 @@ const MODEL_RELOAD_DEBOUNCE_MS = 300;
 
 let providerRegistration: RegisteredModelProvider | undefined;
 let completionRegistration: vscode.Disposable | undefined;
-let inspectOutputChannel: vscode.OutputChannel | undefined;
 let pendingModelLoad: Thenable<void> | undefined;
 let pendingReloadTimer: ReturnType<typeof setTimeout> | undefined;
 let lastModelLoadDiagnostics: CloudflareModelLoadDiagnostics | undefined;
@@ -102,9 +110,7 @@ async function getApiKey(context: vscode.ExtensionContext): Promise<string | und
   if (secret) {
     return normalizeApiKey(secret);
   }
-  const configuredKey = vscode.workspace
-    .getConfiguration("cloudflareCopilot")
-    .get<string>("apiKey");
+  const configuredKey = getCloudflareCopilotConfiguration().apiKey;
   return configuredKey ? normalizeApiKey(configuredKey) : undefined;
 }
 
@@ -155,26 +161,11 @@ function disposePendingReload(): void {
   }
 }
 
-function disposeInspectOutputChannel(): void {
-  if (inspectOutputChannel) {
-    inspectOutputChannel.dispose();
-    inspectOutputChannel = undefined;
-  }
-}
-
 function disposeExtensionState(): void {
   disposeProviderRegistration();
   disposeCompletionRegistration();
-  disposeInspectOutputChannel();
+  disposeCloudflareOutputChannel();
   disposePendingReload();
-}
-
-function getOutputChannel(): vscode.OutputChannel {
-  if (!inspectOutputChannel) {
-    inspectOutputChannel = vscode.window.createOutputChannel("Cloudflare Copilot Models");
-  }
-
-  return inspectOutputChannel;
 }
 
 function createEmptyCloudflareModelSourceCounts(): CloudflareModelSourceCounts {
@@ -268,31 +259,6 @@ function describeGatewaySelection(gatewayId: string | undefined): string {
     : "default compat / direct Workers AI";
 }
 
-function formatUnknownErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (typeof error === "number" || typeof error === "boolean" || typeof error === "bigint") {
-    return error.toString();
-  }
-
-  if (typeof error === "symbol") {
-    return error.description ?? "unknown error";
-  }
-
-  try {
-    const serialized = JSON.stringify(error);
-    return serialized && serialized.length > 0 ? serialized : "unknown error";
-  } catch {
-    return "unknown error";
-  }
-}
-
 export function getNoModelsFoundMessage(modelFilter: string): string {
   if (modelFilter === "all") {
     return "Cloudflare returned no models for this account.";
@@ -317,9 +283,7 @@ function getModelLoadSuccessMessage(modelCount: number, options: LoadModelsOptio
 export async function synchronizeCloudflareModelPicker(
   selectChatModels: typeof vscode.lm.selectChatModels = (selector) =>
     vscode.lm.selectChatModels(selector),
-  onError: (message: string, error: unknown) => void = (message, error) => {
-    console.warn(message, error);
-  },
+  onError: (message: string, error: unknown) => void = logCloudflareWarning,
 ): Promise<void> {
   try {
     await selectChatModels({ vendor: VENDOR });
@@ -378,17 +342,15 @@ async function performModelLoad(
   context: vscode.ExtensionContext,
   options: LoadModelsOptions,
 ): Promise<void> {
-  const config = vscode.workspace.getConfiguration("cloudflareCopilot");
-  const accountId = config.get<string>("accountId");
-  const gatewayId = config.get<string>("gatewayId");
-  const modelFilter = config.get<string>("modelFilter") ?? "Text Generation";
-  const includeGatewaySupportedModels =
-    config.get<boolean>("includeGatewaySupportedModels") ?? true;
-  const gatewaySupportedModelProviders =
-    config.get<string[]>("gatewaySupportedModelProviders") ?? [];
-  const manualModelEntries = config.get<unknown[]>("manualModels") ?? [];
-  const completionModel = config.get<string>("completionModel");
-  const capabilityOverrides = config.get<Record<string, any>>("capabilityOverrides") ?? {};
+  const config = getCloudflareCopilotConfiguration();
+  const accountId = config.accountId;
+  const gatewayId = config.gatewayId;
+  const modelFilter = config.modelFilter;
+  const includeGatewaySupportedModels = config.includeGatewaySupportedModels;
+  const gatewaySupportedModelProviders = [...config.gatewaySupportedModelProviders];
+  const manualModelEntries = [...config.manualModels];
+  const completionModel = config.completionModel;
+  const capabilityOverrides = config.capabilityOverrides;
   const parsedManualModels = parseManualCloudflareModels(manualModelEntries);
   const apiKey = await getApiKey(context);
 
@@ -732,7 +694,6 @@ export function formatRequestMetricSummary(summary: AggregatedCloudflareRequestM
 }
 
 async function inspectRegisteredModels(): Promise<void> {
-  const outputChannel = getOutputChannel();
   const visibleModels = await vscode.lm.selectChatModels({ vendor: VENDOR });
   const registeredModels = providerRegistration?.getRegisteredModels() ?? [];
   const registeredCatalog = providerRegistration?.getRegisteredCatalog() ?? [];
@@ -751,130 +712,130 @@ async function inspectRegisteredModels(): Promise<void> {
     visibleModels.map((model) => model.id),
   );
 
-  outputChannel.clear();
-  outputChannel.appendLine("Cloudflare model inspection");
-  outputChannel.appendLine("");
-  outputChannel.appendLine("Load summary:");
+  clearCloudflareOutputChannel();
+  appendCloudflareLogLine("Cloudflare model inspection");
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine("Load summary:");
 
   if (!lastModelLoadDiagnostics) {
-    outputChannel.appendLine("  (no completed model load recorded yet)");
+    appendCloudflareLogLine("  (no completed model load recorded yet)");
   } else {
     const gatewayProviders =
       lastModelLoadDiagnostics.gatewaySupportedModelProviders.length > 0
         ? lastModelLoadDiagnostics.gatewaySupportedModelProviders.join(", ")
         : "all";
-    outputChannel.appendLine(
+    appendCloudflareLogLine(
       `  - loadedAt=${new Date(lastModelLoadDiagnostics.loadedAt).toISOString()} | source=${lastModelLoadDiagnostics.loadedFromCache ? "cache" : "network"} | cachePolicy=${lastModelLoadDiagnostics.cachePolicy}`,
     );
-    outputChannel.appendLine(
+    appendCloudflareLogLine(
       `  - modelFilter=${lastModelLoadDiagnostics.modelFilter} | gateway=${describeGatewaySelection(lastModelLoadDiagnostics.gatewayId)} | includeGatewaySupportedModels=${lastModelLoadDiagnostics.includeGatewaySupportedModels}`,
     );
-    outputChannel.appendLine(
+    appendCloudflareLogLine(
       `  - gatewayProviders=${gatewayProviders} | manualEntries=${lastModelLoadDiagnostics.configuredManualModels}`,
     );
-    outputChannel.appendLine(
+    appendCloudflareLogLine(
       `  - discovered: workers-ai=${lastModelLoadDiagnostics.discoveredCounts["workers-ai"]} | ai-gateway=${lastModelLoadDiagnostics.discoveredCounts["ai-gateway"]} | manual=${lastModelLoadDiagnostics.discoveredCounts.manual}`,
     );
-    outputChannel.appendLine(
+    appendCloudflareLogLine(
       `  - registered: workers-ai=${lastModelLoadDiagnostics.registeredCounts["workers-ai"]} | ai-gateway=${lastModelLoadDiagnostics.registeredCounts["ai-gateway"]} | manual=${lastModelLoadDiagnostics.registeredCounts.manual}`,
     );
 
     if (lastModelLoadDiagnostics.duplicateHandles.length > 0) {
-      outputChannel.appendLine(
+      appendCloudflareLogLine(
         `  - duplicate handles overridden=${lastModelLoadDiagnostics.duplicateHandles.length}`,
       );
       for (const modelHandle of lastModelLoadDiagnostics.duplicateHandles) {
-        outputChannel.appendLine(`    ${modelHandle}`);
+        appendCloudflareLogLine(`    ${modelHandle}`);
       }
     }
 
     if (lastModelLoadDiagnostics.warnings.length > 0) {
-      outputChannel.appendLine("  - warnings:");
+      appendCloudflareLogLine("  - warnings:");
       for (const warning of lastModelLoadDiagnostics.warnings) {
-        outputChannel.appendLine(`    ${warning}`);
+        appendCloudflareLogLine(`    ${warning}`);
       }
     }
   }
 
-  outputChannel.appendLine("");
-  outputChannel.appendLine(`Registered in provider: ${registeredModels.length}`);
-  outputChannel.appendLine(`Visible via vscode.lm.selectChatModels: ${visibleModels.length}`);
-  outputChannel.appendLine(`Agent-mode eligible (toolCalling): ${agentEligibleCount}`);
-  outputChannel.appendLine(
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine(`Registered in provider: ${registeredModels.length}`);
+  appendCloudflareLogLine(`Visible via vscode.lm.selectChatModels: ${visibleModels.length}`);
+  appendCloudflareLogLine(`Agent-mode eligible (toolCalling): ${agentEligibleCount}`);
+  appendCloudflareLogLine(
     `Registered source counts: workers-ai=${sourceCounts["workers-ai"]} | ai-gateway=${sourceCounts["ai-gateway"]} | manual=${sourceCounts.manual}`,
   );
-  outputChannel.appendLine(
+  appendCloudflareLogLine(
     `Registered but not visible: ${visibilityDiff.registeredOnly.length} | visible but not registered: ${visibilityDiff.visibleOnly.length}`,
   );
-  outputChannel.appendLine("");
-  outputChannel.appendLine("Provider models:");
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine("Provider models:");
 
   if (registeredModels.length === 0) {
-    outputChannel.appendLine("  (none)");
+    appendCloudflareLogLine("  (none)");
   } else {
     for (const model of registeredModels) {
-      outputChannel.appendLine(
+      appendCloudflareLogLine(
         `  - ${formatRegisteredModel(model, registeredCatalogById.get(model.id))}`,
       );
     }
   }
 
-  outputChannel.appendLine("");
-  outputChannel.appendLine("VS Code visible chat models:");
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine("VS Code visible chat models:");
 
   if (visibleModels.length === 0) {
-    outputChannel.appendLine("  (none)");
+    appendCloudflareLogLine("  (none)");
   } else {
     for (const model of visibleModels) {
-      outputChannel.appendLine(`  - ${formatVisibleModel(model)}`);
+      appendCloudflareLogLine(`  - ${formatVisibleModel(model)}`);
     }
   }
 
-  outputChannel.appendLine("");
-  outputChannel.appendLine("Registered but not visible via selectChatModels:");
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine("Registered but not visible via selectChatModels:");
 
   if (visibilityDiff.registeredOnly.length === 0) {
-    outputChannel.appendLine("  (none)");
+    appendCloudflareLogLine("  (none)");
   } else {
     for (const modelId of visibilityDiff.registeredOnly) {
-      outputChannel.appendLine(`  - ${modelId}`);
+      appendCloudflareLogLine(`  - ${modelId}`);
     }
   }
 
-  outputChannel.appendLine("");
-  outputChannel.appendLine("Visible but not registered in provider:");
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine("Visible but not registered in provider:");
 
   if (visibilityDiff.visibleOnly.length === 0) {
-    outputChannel.appendLine("  (none)");
+    appendCloudflareLogLine("  (none)");
   } else {
     for (const modelId of visibilityDiff.visibleOnly) {
-      outputChannel.appendLine(`  - ${modelId}`);
+      appendCloudflareLogLine(`  - ${modelId}`);
     }
   }
 
-  outputChannel.appendLine("");
-  outputChannel.appendLine(`Recent request summary by model: ${requestSummaries.length}`);
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine(`Recent request summary by model: ${requestSummaries.length}`);
 
   if (requestSummaries.length === 0) {
-    outputChannel.appendLine("  (none recorded yet)");
+    appendCloudflareLogLine("  (none recorded yet)");
   } else {
     for (const summary of requestSummaries) {
-      outputChannel.appendLine(`  - ${formatRequestMetricSummary(summary)}`);
+      appendCloudflareLogLine(`  - ${formatRequestMetricSummary(summary)}`);
     }
   }
 
-  outputChannel.appendLine("");
-  outputChannel.appendLine(`Recent Cloudflare requests: ${recentRequestMetrics.length}`);
+  appendCloudflareLogLine("");
+  appendCloudflareLogLine(`Recent Cloudflare requests: ${recentRequestMetrics.length}`);
 
   if (recentRequestMetrics.length === 0) {
-    outputChannel.appendLine("  (none recorded yet)");
+    appendCloudflareLogLine("  (none recorded yet)");
   } else {
     for (const metric of recentRequestMetrics) {
-      outputChannel.appendLine(`  - ${formatRecordedRequestMetric(metric)}`);
+      appendCloudflareLogLine(`  - ${formatRecordedRequestMetric(metric)}`);
     }
   }
 
-  outputChannel.show(true);
+  showCloudflareOutputChannel(true);
   void vscode.window.showInformationMessage(
     `Cloudflare: provider has ${registeredModels.length} model${registeredModels.length !== 1 ? "s" : ""}; VS Code exposes ${visibleModels.length}`,
   );

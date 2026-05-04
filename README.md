@@ -92,14 +92,14 @@ Cloudflare Workers AI direct endpoint  (hosted @cf/... models when no gateway co
 Development tooling requires Node >=22.18.0 because the web build and web test helpers are executed directly as `.mts` files using Node's native TypeScript support.
 
 ```sh
-npm run install
-npm run build
+npm install
+npm run compile
 
 vscode:<CTRL+P> > Developer: Reload Window
                 > Cloudflare: Inspect Models
 ```
 
-Use `npm run build:insiders` for the full desktop Insiders workflow. It packages the extension, installs the generated VSIX into the launcher's isolated `.vscode-insiders/extensions` sandbox, and starts a desktop VS Code runtime with the dev overlay required for `enabledApiProposals: ["languageModelThinkingPart"]`.
+Use `npm run build` or `npm run package` to produce a VSIX, `npm run install:local` to install that VSIX into a local desktop VS Code, and `npm run build:insiders` for the full desktop Insiders workflow. The Insiders command packages the extension, installs the generated VSIX into the launcher's isolated `.vscode-insiders/extensions` sandbox, and starts a desktop VS Code runtime with the dev overlay required for `enabledApiProposals: ["languageModelThinkingPart"]`.
 
 For iterative browser-host development, use `npm run watch-web` to rebuild the bundled web worker entrypoint.
 Use `npm run test-web` for a browser-host smoke test that validates the extension is discoverable and activatable in VS Code for the Web.

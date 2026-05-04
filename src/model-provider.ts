@@ -8,6 +8,7 @@ import {
   getCloudflareModelVersion,
   sortCloudflareModels,
 } from "./cloudflare-client";
+import { logCloudflareWarning } from "./logging";
 import {
   CloudflareAudioContentPart,
   CloudflareChatMessage,
@@ -18,6 +19,7 @@ import {
   CloudflareToolDefinition,
   requestCloudflareChatResponse,
 } from "./cloudflare-runtime";
+import { normalizeSearchText } from "./value-utils";
 
 interface ModelPickerCategory {
   readonly label: string;
@@ -142,7 +144,7 @@ function stringifyDataPartLike(value: unknown): string | undefined {
     dataPart = toDataPartLike(value);
   } catch (err) {
     if (err instanceof UnsupportedDataFormatError) {
-      console.warn(err.message);
+      logCloudflareWarning(err.message);
       return undefined;
     }
     throw err;
@@ -250,8 +252,8 @@ function findTokenLimitFromProperties(
   const hints = propertyHints.map((hint) => hint.toLowerCase());
   const candidates = model.properties
     .filter((property) => {
-      const propertyId = normalizeText(property.property_id);
-      const propertyValue = normalizeText(property.value);
+      const propertyId = normalizeSearchText(property.property_id);
+      const propertyValue = normalizeSearchText(property.value);
       return hints.some((hint) => propertyId.includes(hint) || propertyValue.includes(hint));
     })
     .map((property) => parseTokenNumber(property.value))
@@ -708,27 +710,6 @@ export function toCloudflareToolChoice(
   return toolMode === vscode.LanguageModelChatToolMode.Required ? "required" : "auto";
 }
 
-function normalizeText(value: unknown): string {
-  if (typeof value === "string") {
-    return value.toLowerCase();
-  }
-
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return value.toString().toLowerCase();
-  }
-
-  if (Array.isArray(value) || typeof value === "object") {
-    const json = JSON.stringify(value);
-    return json ? json.toLowerCase() : "";
-  }
-
-  return "";
-}
-
 function hasNegativePropertyValue(value: string): boolean {
   return NEGATIVE_PROPERTY_VALUES.some((candidate) => value.includes(candidate));
 }
@@ -742,8 +723,8 @@ function getPropertyCapability(
   }
 
   for (const property of model.properties) {
-    const propertyId = normalizeText(property.property_id);
-    const propertyValue = normalizeText(property.value);
+    const propertyId = normalizeSearchText(property.property_id);
+    const propertyValue = normalizeSearchText(property.value);
     const matchesHint = propertyHints.some(
       (hint) => propertyId.includes(hint) || propertyValue.includes(hint),
     );
@@ -765,7 +746,10 @@ function getPropertyCapability(
 function getModelMetadataText(model: CloudflareModel): string {
   const propertiesText =
     model.properties
-      ?.map((property) => `${normalizeText(property.property_id)} ${normalizeText(property.value)}`)
+      ?.map(
+        (property) =>
+          `${normalizeSearchText(property.property_id)} ${normalizeSearchText(property.value)}`,
+      )
       .join(" ") ?? "";
 
   return [
@@ -777,7 +761,7 @@ function getModelMetadataText(model: CloudflareModel): string {
     model.task?.description,
     propertiesText,
   ]
-    .map(normalizeText)
+    .map((value) => normalizeSearchText(value))
     .join(" ");
 }
 

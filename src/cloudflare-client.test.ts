@@ -12,31 +12,15 @@ import {
   sortCloudflareModels,
 } from "./cloudflare-client";
 import type { CloudflareModel } from "./cloudflare-client";
+import {
+  makeJsonResponse,
+  makeTextResponse,
+  mockFetch,
+  restoreGlobalFetch,
+  saveGlobalFetch,
+} from "./test-utils";
 
-// ---------------------------------------------------------------------------
-// Fetch mock helpers
-// ---------------------------------------------------------------------------
-
-// oxlint-disable-next-line @typescript-eslint/no-explicit-any
-const g = globalThis as any;
 let savedFetch: typeof fetch;
-
-type MockFetchImpl = (url: string | URL, init?: RequestInit) => Promise<Response>;
-
-function mockFetch(impl: MockFetchImpl): void {
-  g.fetch = impl as typeof fetch;
-}
-
-function makeJsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function makeTextResponse(body: string, status = 200): Response {
-  return new Response(body, { status });
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,11 +36,11 @@ function makeTextGenModel(id: string, name: string): CloudflareModel {
 
 suite("cloudflare-client", () => {
   setup(() => {
-    savedFetch = g.fetch as typeof fetch;
+    savedFetch = saveGlobalFetch();
   });
 
   teardown(() => {
-    g.fetch = savedFetch;
+    restoreGlobalFetch(savedFetch);
   });
 
   // -------------------------------------------------------------------------

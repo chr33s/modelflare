@@ -320,6 +320,12 @@ function parseCloudflareChatResponse(
 
   const parts = extractCloudflareResponseParts(parsed, trimEnd);
   const text = extractCloudflareText(parsed) ?? joinResponseText(parts);
+  if (text !== undefined && !parts.some((part) => part.type === "text")) {
+    parts.unshift({
+      type: "text",
+      value: trimEnd ? text.trimEnd() : text,
+    });
+  }
   const toolCalls = extractCloudflareToolCalls(parsed);
   const usage = extractCloudflareUsage(parsed);
 
@@ -1013,6 +1019,11 @@ function readMessageContent(content: unknown): string | undefined {
 
       const record = toRecord(part);
       if (!record) {
+        return "";
+      }
+
+      const recordType = typeof record.type === "string" ? record.type.toLowerCase() : undefined;
+      if (recordType === "reasoning" || recordType === "thinking") {
         return "";
       }
 
