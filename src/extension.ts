@@ -6,6 +6,7 @@ import {
   fetchCloudflareAiGatewayModels,
   fetchCloudflareModels,
   getCloudflareModelHandle,
+  getCloudflareModelPickerCategory,
   parseManualCloudflareModels,
 } from "./cloudflare-client";
 import { getModelflareConfiguration } from "./config";
@@ -142,7 +143,7 @@ function registerLoadedModels(
   gatewayId: string | undefined,
   completionModel: string | undefined,
 ): void {
-  providerRegistration ??= registerModelProvider(context);
+  providerRegistration ??= registerModelProvider(context).provider;
   providerRegistration.updateModels(models, accountId, apiKey, gatewayId);
   disposeCompletionRegistration();
   completionRegistration = registerCompletionProvider(
@@ -626,7 +627,10 @@ function formatRegisteredModel(
   const detail = model.detail ? ` | detail=${model.detail}` : "";
   const capabilities = capabilityLabels.length > 0 ? capabilityLabels.join(",") : "none";
   const isUserSelectable = ` | isUserSelectable=${model.isUserSelectable === true}`;
-  const category = model.category?.label ? ` | category=${model.category.label}` : "";
+  const categoryLabel = cloudflareModel
+    ? getCloudflareModelPickerCategory(cloudflareModel).label
+    : undefined;
+  const category = categoryLabel ? ` | category=${categoryLabel}` : "";
   const source = cloudflareModel?.source
     ? ` | source=${formatCloudflareModelSource(cloudflareModel.source)}`
     : "";
@@ -891,7 +895,9 @@ async function inspectRegisteredModels(): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): void {
   loadCloudflareRequestMetrics(context);
-  providerRegistration = registerModelProvider(context);
+  const registrationResult = registerModelProvider(context);
+  providerRegistration = registrationResult.provider;
+  context.subscriptions.push(registrationResult.disposable);
 
   // Command: Refresh models
   context.subscriptions.push(

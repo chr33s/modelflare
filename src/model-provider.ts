@@ -4,8 +4,9 @@ import {
   CloudflareModel,
   getCloudflareModelFamily,
   getCloudflareModelHandle,
-  getCloudflareModelPickerCategory,
+  getCloudflareModelPriceCategory,
   getCloudflareModelVersion,
+  inferCloudflareEditToolHints,
   sortCloudflareModels,
 } from "./cloudflare-client";
 import { logCloudflareWarning } from "./logging";
@@ -22,12 +23,6 @@ import {
 import { getModelflareConfiguration } from "./config";
 import { LANGUAGE_MODEL_VENDOR } from "./provider-identity";
 import { normalizeSearchText } from "./value-utils";
-
-interface ModelPickerCategory {
-  readonly label: string;
-  readonly order?: number;
-  readonly showHeader?: boolean;
-}
 
 interface CloudflareLanguageModelConfigurationProperty {
   readonly type: "string";
@@ -50,11 +45,16 @@ interface CloudflareProvideLanguageModelChatResponseOptions
   };
 }
 
+interface CloudflareLanguageModelChatCapabilities extends vscode.LanguageModelChatCapabilities {
+  readonly editTools?: readonly string[];
+}
+
 interface CloudflareLanguageModelChatInformation extends vscode.LanguageModelChatInformation {
   readonly isUserSelectable?: boolean;
   readonly targetChatSessionType?: string;
-  readonly category?: ModelPickerCategory;
   readonly configurationSchema?: CloudflareLanguageModelConfigurationSchema;
+  readonly capabilities: CloudflareLanguageModelChatCapabilities;
+  readonly priceCategory?: string;
 }
 
 interface ProviderModelInformation extends CloudflareLanguageModelChatInformation {
@@ -73,6 +73,11 @@ export interface RegisteredModelProvider
   ): void;
   getRegisteredModels(): readonly ProviderModelInformation[];
   getRegisteredCatalog(): readonly CloudflareModel[];
+}
+
+export interface ProviderRegistrationResult {
+  provider: RegisteredModelProvider;
+  disposable: vscode.Disposable;
 }
 
 const TOOL_CALLING_HINTS = ["function calling", "tool calling", "agent capabilities"];
@@ -829,18 +834,23 @@ function resolveCapability(model: CloudflareModel, options: CapabilityResolution
   );
 }
 
-export function inferCapabilities(model: CloudflareModel): vscode.LanguageModelChatCapabilities {
+export function inferCapabilities(model: CloudflareModel): CloudflareLanguageModelChatCapabilities {
+  const toolCalling = resolveCapability(model, {
+    explicitValue: model.detectedCapabilities?.toolCalling,
+    propertyHints: TOOL_CALLING_PROPERTY_HINTS,
+    metadataHints: TOOL_CALLING_HINTS,
+  });
+  const imageInput = resolveCapability(model, {
+    explicitValue: model.detectedCapabilities?.imageInput,
+    propertyHints: IMAGE_INPUT_PROPERTY_HINTS,
+    metadataHints: IMAGE_INPUT_HINTS,
+  });
+  const editTools = toolCalling ? inferCloudflareEditToolHints(model) : undefined;
+
   return {
-    toolCalling: resolveCapability(model, {
-      explicitValue: model.detectedCapabilities?.toolCalling,
-      propertyHints: TOOL_CALLING_PROPERTY_HINTS,
-      metadataHints: TOOL_CALLING_HINTS,
-    }),
-    imageInput: resolveCapability(model, {
-      explicitValue: model.detectedCapabilities?.imageInput,
-      propertyHints: IMAGE_INPUT_PROPERTY_HINTS,
-      metadataHints: IMAGE_INPUT_HINTS,
-    }),
+    toolCalling,
+    imageInput,
+    ...(editTools && editTools.length > 0 ? { editTools } : {}),
   };
 }
 
@@ -979,7 +989,7 @@ function toProviderModelInformation(model: CloudflareModel): ProviderModelInform
   const modelHandle = getCloudflareModelHandle(model);
   const capabilities = inferCapabilities(model);
   const tokenLimits = resolveModelTokenLimits(model, capabilities);
-  const category = getCloudflareModelPickerCategory(model);
+  const priceCategory = getCloudflareModelPriceCategory(model);
 
   return {
     id: modelHandle,
@@ -990,15 +1000,12 @@ function toProviderModelInformation(model: CloudflareModel): ProviderModelInform
     maxOutputTokens: tokenLimits.maxOutputTokens,
     capabilities,
     isUserSelectable: true,
-    category: {
-      label: category.label,
-      order: category.order,
-    },
     configurationSchema: buildReasoningEffortConfigurationSchema(model),
     tooltip: model.description,
     detail: getModelDetail(model, capabilities),
     rawMaxInputTokens: tokenLimits.rawMaxInputTokens,
     reservedPromptTokens: tokenLimits.reservedPromptTokens,
+    ...(priceCategory ? { priceCategory } : {}),
   };
 }
 
@@ -1006,10 +1013,6 @@ class CloudflareModelProvider
   implements vscode.LanguageModelChatProvider<ProviderModelInformation>, RegisteredModelProvider
 {
   private readonly onDidChangeEmitter = new vscode.EventEmitter<void>();
-  private readonly registration = vscode.lm.registerLanguageModelChatProvider(
-    LANGUAGE_MODEL_VENDOR,
-    this,
-  );
   private modelInfos: ProviderModelInformation[] = [];
   private modelsById = new Map<string, CloudflareModel>();
   private state: CloudflareRequestState | undefined;
@@ -1139,11 +1142,14 @@ class CloudflareModelProvider
   }
 
   dispose(): void {
-    this.registration.dispose();
     this.onDidChangeEmitter.dispose();
   }
 }
 
-export function registerModelProvider(context: vscode.ExtensionContext): RegisteredModelProvider {
-  return new CloudflareModelProvider(context);
+export function registerModelProvider(
+  context: vscode.ExtensionContext,
+): ProviderRegistrationResult {
+  const provider = new CloudflareModelProvider(context);
+  const disposable = vscode.lm.registerLanguageModelChatProvider(LANGUAGE_MODEL_VENDOR, provider);
+  return { provider, disposable };
 }

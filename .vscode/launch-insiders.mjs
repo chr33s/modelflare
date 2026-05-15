@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const EXTENSION_ID = "chr33s.modelflare";
-const PROPOSED_API = "languageModelThinkingPart";
+const PROPOSED_APIS = ["chatProvider", "languageModelThinkingPart"];
 const currentFilePath = fileURLToPath(import.meta.url);
 const vscodeDirectory = path.dirname(currentFilePath);
 const workspaceRoot = path.dirname(vscodeDirectory);
@@ -205,7 +205,7 @@ async function resolveInsidersExecutable() {
 
 async function writeDevManifest() {
   const manifest = await readWorkspaceManifest();
-  manifest.enabledApiProposals = [PROPOSED_API];
+  manifest.enabledApiProposals = PROPOSED_APIS;
 
   await mkdir(devExtensionPath, { recursive: true });
   await writeFile(devManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -289,7 +289,7 @@ async function main() {
   });
   child.unref();
 
-  console.log(`Launched ${label} with ${PROPOSED_API} enabled for ${EXTENSION_ID}.`);
+  console.log(`Launched ${label} with ${PROPOSED_APIS.join(", ")} enabled for ${EXTENSION_ID}.`);
 }
 
 main().catch((error) => {

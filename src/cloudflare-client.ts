@@ -818,6 +818,51 @@ export function getCloudflareModelVersion(model: CloudflareModel): string {
   );
 }
 
+export function inferCloudflareEditToolHints(
+  model: CloudflareModel,
+): readonly string[] | undefined {
+  const handle = getCloudflareModelHandle(model).toLowerCase();
+  const metadata = getCloudflareModelMetadataText(model);
+  const text = `${handle} ${metadata}`;
+
+  if (text.includes("claude")) {
+    return ["apply-patch"];
+  }
+
+  if (/\bgpt-?[45]/u.test(text) || /\bo[134]\b/u.test(text)) {
+    return ["apply-patch"];
+  }
+
+  return undefined;
+}
+
+export function getCloudflareModelPriceCategory(model: CloudflareModel): string | undefined {
+  const authorSegment = getCloudflareModelAuthorSegment(model);
+  const handle = getCloudflareModelHandle(model).toLowerCase();
+  const metadata = getCloudflareModelMetadataText(model);
+  const text = `${handle} ${metadata}`;
+
+  const isMini =
+    text.includes("haiku") ||
+    text.includes("mini") ||
+    text.includes("flash") ||
+    text.includes("nano");
+
+  if (authorSegment === "anthropic" || authorSegment === "openai" || authorSegment === "xai") {
+    return isMini ? "medium" : "high";
+  }
+
+  if (authorSegment === "google-ai-studio") {
+    return isMini ? "medium" : "high";
+  }
+
+  if (handle.startsWith("@cf/")) {
+    return "low";
+  }
+
+  return undefined;
+}
+
 export function getCloudflareModelPickerCategory(
   model: CloudflareModel,
 ): CloudflareModelPickerCategory {

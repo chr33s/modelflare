@@ -199,8 +199,8 @@ suite("model-provider", () => {
   });
 
   suite("provider model metadata", () => {
-    test("derives family, version, and category from the model handle", () => {
-      const provider = registerModelProvider(mockContext);
+    test("derives family and version from the model handle", () => {
+      const provider = registerModelProvider(mockContext).provider;
 
       try {
         provider.updateModels(
@@ -217,14 +217,94 @@ suite("model-provider", () => {
         const model = provider.getRegisteredModels()[0];
         assert.strictEqual(model.family, "meta/llama");
         assert.strictEqual(model.version, "3.1");
-        assert.strictEqual(model.category?.label, "Meta");
+        assert.strictEqual(
+          (model as { category?: unknown }).category,
+          undefined,
+          "category should no longer be emitted; VS Code 1.120+ groups by provider natively",
+        );
+        assert.strictEqual(model.priceCategory, "low");
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("emits a high priceCategory for hosted provider-prefixed handles", () => {
+      const provider = registerModelProvider(mockContext).provider;
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              id: "openai/gpt-5",
+              name: "gpt-5",
+              provider: { id: "openai", name: "OpenAI" },
+              task: { id: "t", name: "Text Generation" },
+            }),
+            makeModel({
+              id: "openai/gpt-5-mini",
+              name: "gpt-5-mini",
+              provider: { id: "openai", name: "OpenAI" },
+              task: { id: "t", name: "Text Generation" },
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const [gpt5, gpt5Mini] = provider.getRegisteredModels();
+        assert.strictEqual(gpt5.priceCategory, "high");
+        assert.strictEqual(gpt5Mini.priceCategory, "medium");
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("hints apply-patch as the preferred edit tool for Claude and OpenAI families", () => {
+      const provider = registerModelProvider(mockContext).provider;
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              id: "anthropic/claude-sonnet-4-5",
+              name: "claude-sonnet-4-5",
+              provider: { id: "anthropic", name: "Anthropic" },
+              task: { id: "t", name: "Text Generation" },
+              detectedCapabilities: { toolCalling: true },
+            }),
+            makeModel({
+              id: "openai/gpt-5",
+              name: "gpt-5",
+              provider: { id: "openai", name: "OpenAI" },
+              task: { id: "t", name: "Text Generation" },
+              detectedCapabilities: { toolCalling: true },
+            }),
+            makeModel({
+              name: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+              task: { id: "t", name: "Text Generation" },
+              detectedCapabilities: { toolCalling: true },
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const byId = new Map(provider.getRegisteredModels().map((m) => [m.id, m]));
+        assert.deepStrictEqual(byId.get("anthropic/claude-sonnet-4-5")?.capabilities.editTools, [
+          "apply-patch",
+        ]);
+        assert.deepStrictEqual(byId.get("openai/gpt-5")?.capabilities.editTools, ["apply-patch"]);
+        assert.strictEqual(
+          byId.get("@cf/meta/llama-3.3-70b-instruct-fp8-fast")?.capabilities.editTools,
+          undefined,
+        );
       } finally {
         provider.dispose();
       }
     });
 
     test("orders richer stable chat models ahead of preview variants", () => {
-      const provider = registerModelProvider(mockContext);
+      const provider = registerModelProvider(mockContext).provider;
 
       try {
         provider.updateModels(
@@ -253,7 +333,7 @@ suite("model-provider", () => {
     });
 
     test("adds a Think Effort picker when the model exposes effort levels", () => {
-      const provider = registerModelProvider(mockContext);
+      const provider = registerModelProvider(mockContext).provider;
 
       try {
         provider.updateModels(
@@ -556,7 +636,7 @@ suite("model-provider", () => {
 
   suite("provider token accounting", () => {
     test("derives effective maxInputTokens from model metadata", () => {
-      const provider = registerModelProvider(mockContext);
+      const provider = registerModelProvider(mockContext).provider;
 
       try {
         provider.updateModels(
@@ -578,7 +658,7 @@ suite("model-provider", () => {
     });
 
     test("prefers explicit max_input_tokens over a larger context window", () => {
-      const provider = registerModelProvider(mockContext);
+      const provider = registerModelProvider(mockContext).provider;
 
       try {
         provider.updateModels(
@@ -602,7 +682,7 @@ suite("model-provider", () => {
     });
 
     test("prefers max_input_length over total context window", () => {
-      const provider = registerModelProvider(mockContext);
+      const provider = registerModelProvider(mockContext).provider;
 
       try {
         provider.updateModels(
@@ -627,7 +707,7 @@ suite("model-provider", () => {
     });
 
     test("counts message overhead for text and data parts", async () => {
-      const provider = registerModelProvider(mockContext);
+      const provider = registerModelProvider(mockContext).provider;
       const tokenSource = new vscode.CancellationTokenSource();
 
       try {
@@ -654,7 +734,7 @@ suite("model-provider", () => {
     });
 
     test("rejects requests that exceed the estimated context window", async () => {
-      const provider = registerModelProvider(mockContext);
+      const provider = registerModelProvider(mockContext).provider;
       const tokenSource = new vscode.CancellationTokenSource();
 
       try {

@@ -219,6 +219,9 @@
     "onStartupFinished"
   ],
   "icon": "icon.png",
+  "enabledApiProposals": [
+    "chatProvider"
+  ],
   "engines": {
     "node": ">=22.18.0",
     "vscode": "^1.99.0"

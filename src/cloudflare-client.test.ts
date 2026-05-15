@@ -5,8 +5,10 @@ import {
   fetchCloudflareModels,
   getCloudflareModelFamily,
   getCloudflareModelPickerCategory,
+  getCloudflareModelPriceCategory,
   getCloudflareModelVersion,
   enrichCloudflareModelsWithCapabilities,
+  inferCloudflareEditToolHints,
   parseManualCloudflareModels,
   selectCloudflareCompletionModel,
   sortCloudflareModels,
@@ -443,6 +445,96 @@ suite("cloudflare-client", () => {
         label: "OpenAI",
         order: 10,
       });
+    });
+  });
+
+  suite("inferCloudflareEditToolHints", () => {
+    test("recommends apply-patch for Anthropic Claude handles", () => {
+      const model: CloudflareModel = {
+        id: "anthropic/claude-sonnet-4-5",
+        name: "claude-sonnet-4-5",
+        provider: { id: "anthropic", name: "Anthropic" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+
+      assert.deepStrictEqual(inferCloudflareEditToolHints(model), ["apply-patch"]);
+    });
+
+    test("recommends apply-patch for OpenAI gpt-4/5 and o-series handles", () => {
+      const gpt5: CloudflareModel = {
+        id: "openai/gpt-5",
+        name: "gpt-5",
+        provider: { id: "openai" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+      const gpt4o: CloudflareModel = {
+        id: "openai/gpt-4o-mini",
+        name: "gpt-4o-mini",
+        provider: { id: "openai" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+      const o3: CloudflareModel = {
+        id: "openai/o3",
+        name: "o3",
+        provider: { id: "openai" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+
+      assert.deepStrictEqual(inferCloudflareEditToolHints(gpt5), ["apply-patch"]);
+      assert.deepStrictEqual(inferCloudflareEditToolHints(gpt4o), ["apply-patch"]);
+      assert.deepStrictEqual(inferCloudflareEditToolHints(o3), ["apply-patch"]);
+    });
+
+    test("returns undefined for other model families so VS Code can pick the tool", () => {
+      const llama = makeTextGenModel("uuid", "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+      const qwen = makeTextGenModel("uuid", "@cf/qwen/qwen2.5-coder-7b-instruct");
+
+      assert.strictEqual(inferCloudflareEditToolHints(llama), undefined);
+      assert.strictEqual(inferCloudflareEditToolHints(qwen), undefined);
+    });
+  });
+
+  suite("getCloudflareModelPriceCategory", () => {
+    test("classifies @cf/ direct Workers AI models as low", () => {
+      const model = makeTextGenModel("uuid", "@cf/meta/llama-3.3-8b-instruct");
+
+      assert.strictEqual(getCloudflareModelPriceCategory(model), "low");
+    });
+
+    test("classifies hosted flagship handles as high and mini variants as medium", () => {
+      const gpt5: CloudflareModel = {
+        id: "openai/gpt-5",
+        name: "gpt-5",
+        provider: { id: "openai" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+      const gpt5Mini: CloudflareModel = {
+        id: "openai/gpt-5-mini",
+        name: "gpt-5-mini",
+        provider: { id: "openai" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+      const haiku: CloudflareModel = {
+        id: "anthropic/claude-haiku",
+        name: "claude-haiku",
+        provider: { id: "anthropic" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+
+      assert.strictEqual(getCloudflareModelPriceCategory(gpt5), "high");
+      assert.strictEqual(getCloudflareModelPriceCategory(gpt5Mini), "medium");
+      assert.strictEqual(getCloudflareModelPriceCategory(haiku), "medium");
+    });
+
+    test("returns undefined when the author is not a known paid third party", () => {
+      const model: CloudflareModel = {
+        id: "openrouter/some-model",
+        name: "some-model",
+        provider: { id: "openrouter" },
+        task: { id: "tg", name: "Text Generation" },
+      };
+
+      assert.strictEqual(getCloudflareModelPriceCategory(model), undefined);
     });
   });
 
