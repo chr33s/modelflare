@@ -778,6 +778,49 @@ suite("cloudflare-client", () => {
       assert.strictEqual(result[0].detectedCapabilities?.structuredOutput, true);
     });
 
+    test("detects max output tokens from max_tokens.maximum in schema", async () => {
+      mockFetch(async (url) => {
+        if (url.toString().includes("models/schema")) {
+          return makeJsonResponse({
+            result: {
+              input: {
+                properties: {
+                  messages: { type: "array" },
+                  max_tokens: { type: "integer", default: 256, maximum: 32768 },
+                },
+              },
+              output: {},
+            },
+          });
+        }
+        return makeJsonResponse({ success: true, result: [], errors: [] });
+      });
+
+      const models = [makeTextGenModel("maxtok-uuid-a", "@cf/maxtok-model-a")];
+      const result = await enrichCloudflareModelsWithCapabilities("acct", "key", models);
+
+      assert.strictEqual(result[0].detectedMaxOutputTokens, 32768);
+    });
+
+    test("leaves detectedMaxOutputTokens undefined when schema has no max_tokens.maximum", async () => {
+      mockFetch(async (url) => {
+        if (url.toString().includes("models/schema")) {
+          return makeJsonResponse({
+            result: {
+              input: { properties: { messages: { type: "array" } } },
+              output: {},
+            },
+          });
+        }
+        return makeJsonResponse({ success: true, result: [], errors: [] });
+      });
+
+      const models = [makeTextGenModel("maxtok-uuid-b", "@cf/maxtok-model-b")];
+      const result = await enrichCloudflareModelsWithCapabilities("acct", "key", models);
+
+      assert.strictEqual(result[0].detectedMaxOutputTokens, undefined);
+    });
+
     test("handles schema fetch failure gracefully without throwing", async () => {
       mockFetch(async (url) => {
         if (url.toString().includes("models/schema")) {

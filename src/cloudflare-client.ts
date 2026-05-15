@@ -1,5 +1,6 @@
 import {
   detectCloudflareCapabilitiesFromSchema,
+  detectCloudflareMaxOutputTokensFromSchema,
   detectCloudflareReasoningEffortLevelsFromSchema,
   readManualCloudflareModelCapabilities,
   type CloudflareDetectedCapabilities,
@@ -31,6 +32,7 @@ export interface CloudflareModel {
   properties?: Array<{ property_id: string; value: unknown }>;
   detectedCapabilities?: CloudflareDetectedCapabilities;
   reasoningEffortLevels?: readonly string[];
+  detectedMaxOutputTokens?: number;
 }
 
 export interface CloudflareModelPickerCategory {
@@ -988,6 +990,7 @@ async function detectModelCapabilities(
     | {
         detectedCapabilities: CloudflareDetectedCapabilities;
         reasoningEffortLevels?: readonly string[];
+        maxOutputTokens?: number;
       }
     | undefined
   >,
@@ -996,6 +999,7 @@ async function detectModelCapabilities(
   | {
       detectedCapabilities: CloudflareDetectedCapabilities;
       reasoningEffortLevels?: readonly string[];
+      maxOutputTokens?: number;
     }
   | undefined
 > {
@@ -1008,6 +1012,7 @@ async function detectModelCapabilities(
     const result = {
       detectedCapabilities: detectCloudflareCapabilitiesFromSchema(schema),
       reasoningEffortLevels: detectCloudflareReasoningEffortLevelsFromSchema(schema),
+      maxOutputTokens: detectCloudflareMaxOutputTokensFromSchema(schema),
     };
     capabilityCache.set(modelHandle, result);
     return result;
@@ -1040,6 +1045,7 @@ export async function enrichCloudflareModelsWithCapabilities(
     | {
         detectedCapabilities: CloudflareDetectedCapabilities;
         reasoningEffortLevels?: readonly string[];
+        maxOutputTokens?: number;
       }
     | undefined
   >();
@@ -1093,6 +1099,10 @@ export async function enrichCloudflareModelsWithCapabilities(
       if (result.detectedCapabilities.reasoningEffortLevels?.length) {
         enrichedModels[result.modelIndex].reasoningEffortLevels =
           result.detectedCapabilities.reasoningEffortLevels;
+      }
+      if (result.detectedCapabilities.maxOutputTokens !== undefined) {
+        enrichedModels[result.modelIndex].detectedMaxOutputTokens =
+          result.detectedCapabilities.maxOutputTokens;
       }
     }
   }

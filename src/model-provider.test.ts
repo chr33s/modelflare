@@ -650,8 +650,94 @@ suite("model-provider", () => {
         );
 
         const model = provider.getRegisteredModels()[0];
-        assert.strictEqual(model.maxInputTokens, 15980);
+        assert.strictEqual(model.maxInputTokens, 16364);
         assert.strictEqual(model.maxOutputTokens, 4096);
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("uses compat fallback context limits for AI Gateway models", () => {
+      const provider = registerModelProvider(mockContext).provider;
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              id: "openai/gpt-5-mini",
+              name: "gpt-5-mini",
+              source: "ai-gateway",
+              transport: "compat",
+              detectedCapabilities: { toolCalling: true },
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.maxInputTokens, 127972);
+        assert.strictEqual(model.maxOutputTokens, 8192);
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("uses numeric token hints from compat model handles", () => {
+      const provider = registerModelProvider(mockContext).provider;
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              id: "openai/gpt-4-32k",
+              name: "gpt-4-32k",
+              source: "ai-gateway",
+              transport: "compat",
+              detectedCapabilities: { toolCalling: true },
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.maxInputTokens, 32740);
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("uses detectedMaxOutputTokens from schema when no output property is set", () => {
+      const provider = registerModelProvider(mockContext).provider;
+
+      try {
+        provider.updateModels([makeModel({ detectedMaxOutputTokens: 32768 })], "acct", "key");
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.maxOutputTokens, 32768);
+      } finally {
+        provider.dispose();
+      }
+    });
+
+    test("output property takes priority over detectedMaxOutputTokens", () => {
+      const provider = registerModelProvider(mockContext).provider;
+
+      try {
+        provider.updateModels(
+          [
+            makeModel({
+              properties: [{ property_id: "max_new_tokens", value: "8192" }],
+              detectedMaxOutputTokens: 32768,
+            }),
+          ],
+          "acct",
+          "key",
+        );
+
+        const model = provider.getRegisteredModels()[0];
+        assert.strictEqual(model.maxOutputTokens, 8192);
       } finally {
         provider.dispose();
       }

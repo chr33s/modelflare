@@ -239,6 +239,20 @@ export function detectCloudflareReasoningEffortLevelsFromSchema(
   return getReasoningEffortLevels(inputSchema);
 }
 
+export function detectCloudflareMaxOutputTokensFromSchema(schema: unknown): number | undefined {
+  const schemaResult = getCloudflareSchemaResult(schema);
+  const inputSchema = getCloudflareSchemaSection(schemaResult, "input");
+
+  const maxTokensSchemas = findPropertySchemas(inputSchema, new Set(["max_tokens"]));
+  for (const tokenSchema of maxTokensSchemas) {
+    const record = getObjectRecord(tokenSchema);
+    if (record && typeof record.maximum === "number" && record.maximum > 0) {
+      return Math.floor(record.maximum);
+    }
+  }
+  return undefined;
+}
+
 export function readManualCloudflareModelCapabilities(
   value: unknown,
 ): Partial<CloudflareDetectedCapabilities> | undefined {

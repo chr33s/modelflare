@@ -87,6 +87,8 @@ const IMAGE_INPUT_PROPERTY_HINTS = ["vision", "image", "multimodal"];
 const NEGATIVE_PROPERTY_VALUES = ["false", "0", "no", "disabled", "unsupported"];
 const FALLBACK_MAX_INPUT_TOKENS = 8192;
 const FALLBACK_MAX_OUTPUT_TOKENS = 4096;
+const COMPAT_FALLBACK_MAX_INPUT_TOKENS = 32768;
+const COMPAT_FALLBACK_MAX_OUTPUT_TOKENS = 8192;
 const BASE_PROMPT_TOKEN_OVERHEAD = 16;
 const BASE_COMPLETION_TOKEN_OVERHEAD = 4;
 const TOOL_MODE_PROMPT_OVERHEAD = 8;
@@ -128,6 +130,53 @@ interface ResolvedModelTokenLimits {
   readonly rawMaxInputTokens: number;
   readonly maxOutputTokens: number;
   readonly reservedPromptTokens: number;
+}
+
+function getModelHandleTokenHints(model: CloudflareModel): number | undefined {
+  const modelHandle = getCloudflareModelHandle(model).toLowerCase();
+  const explicitMatches = Array.from(modelHandle.matchAll(/(\d+(?:\.\d+)?)\s*([km])/g));
+  const explicitParsed = explicitMatches
+    .map((match) => parseTokenNumber(`${match[1]}${match[2]}`))
+    .filter((candidate): candidate is number => candidate !== undefined);
+
+  if (explicitParsed.length > 0) {
+    return Math.max(...explicitParsed);
+  }
+
+  if (model.transport !== "compat") {
+    return undefined;
+  }
+
+  // Compat providers rarely expose context windows in metadata; use conservative family defaults.
+  if (modelHandle.includes("claude")) {
+    return 200_000;
+  }
+  if (modelHandle.includes("gemini")) {
+    return 1_000_000;
+  }
+  if (
+    modelHandle.includes("gpt-5") ||
+    modelHandle.includes("gpt-4") ||
+    modelHandle.includes("o1") ||
+    modelHandle.includes("o3") ||
+    modelHandle.includes("o4")
+  ) {
+    return 128_000;
+  }
+
+  return COMPAT_FALLBACK_MAX_INPUT_TOKENS;
+}
+
+function getFallbackMaxInputTokens(model: CloudflareModel): number {
+  return model.transport === "compat"
+    ? COMPAT_FALLBACK_MAX_INPUT_TOKENS
+    : FALLBACK_MAX_INPUT_TOKENS;
+}
+
+function getFallbackMaxOutputTokens(model: CloudflareModel, rawMaxInputTokens: number): number {
+  const fallbackMaxOutput =
+    model.transport === "compat" ? COMPAT_FALLBACK_MAX_OUTPUT_TOKENS : FALLBACK_MAX_OUTPUT_TOKENS;
+  return Math.min(fallbackMaxOutput, rawMaxInputTokens);
 }
 
 function decodeText(data: Uint8Array): string {
@@ -238,7 +287,7 @@ function parseTokenNumber(value: unknown): number | undefined {
   }
 
   if (typeof value === "string") {
-    const normalized = value.toLowerCase().replace(/,/g, " ");
+    const normalized = value.toLowerCase().replace(/(\d),(?=\d)/g, "$1");
     const matches = Array.from(normalized.matchAll(/(\d+(?:\.\d+)?)\s*([km]?)/g));
     const parsed = matches
       .map((match) => {
@@ -248,7 +297,7 @@ function parseTokenNumber(value: unknown): number | undefined {
         }
 
         const suffix = match[2];
-        const multiplier = suffix === "m" ? 1_000_000 : suffix === "k" ? 1_000 : 1;
+        const multiplier = suffix === "m" ? 1_000_000 : suffix === "k" ? 1_024 : 1;
         return Math.floor(numericValue * multiplier);
       })
       .filter((candidate): candidate is number => candidate !== undefined);
@@ -339,12 +388,14 @@ function resolveModelTokenLimits(
     (explicitInputLimit !== undefined && contextWindowLimit !== undefined
       ? Math.min(explicitInputLimit, contextWindowLimit)
       : (explicitInputLimit ?? contextWindowLimit)) ??
+    getModelHandleTokenHints(model) ??
     findTokenLimitFromDescription(model, "input") ??
-    FALLBACK_MAX_INPUT_TOKENS;
+    getFallbackMaxInputTokens(model);
   const maxOutputTokens =
     findTokenLimitFromProperties(model, OUTPUT_TOKEN_PROPERTY_HINTS) ??
     findTokenLimitFromDescription(model, "output") ??
-    Math.min(FALLBACK_MAX_OUTPUT_TOKENS, rawMaxInputTokens);
+    model.detectedMaxOutputTokens ??
+    getFallbackMaxOutputTokens(model, rawMaxInputTokens);
   const reservedPromptTokens =
     BASE_PROMPT_TOKEN_OVERHEAD +
     BASE_COMPLETION_TOKEN_OVERHEAD +
