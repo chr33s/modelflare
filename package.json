@@ -1,7 +1,7 @@
 {
   "name": "modelflare",
   "displayName": "Cloudflare Models for Copilot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Automatically surfaces all Cloudflare Workers AI models in VS Code Copilot Chat",
   "categories": [
     "AI",
