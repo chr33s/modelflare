@@ -28,6 +28,7 @@ import {
   loadCloudflareRequestMetrics,
 } from "./request-metrics";
 import { LANGUAGE_MODEL_VENDOR } from "./provider-identity";
+import { registerUsageTracker } from "./usage-tracker";
 import { formatUnknownErrorMessage } from "./value-utils";
 
 const SECRET_KEY = "cloudflare-api-key";
@@ -898,6 +899,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const registrationResult = registerModelProvider(context);
   providerRegistration = registrationResult.provider;
   context.subscriptions.push(registrationResult.disposable);
+  context.subscriptions.push(registerUsageTracker(context));
 
   // Command: Refresh models
   context.subscriptions.push(

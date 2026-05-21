@@ -12,6 +12,7 @@ import {
   TEXT_GENERATION_MODEL_FILTER,
   TEXT_GENERATION_TASK_NAME,
 } from "./model-filter";
+import type { RecordedCloudflareRequestMetric } from "./request-metrics";
 import { getObjectRecord, normalizeSearchText, parseJson } from "./value-utils";
 
 export interface CloudflareModel {
@@ -65,8 +66,53 @@ interface CloudflareModelsResponse {
   };
 }
 
+interface CloudflareAiGatewayLogEntry {
+  id: string;
+  created_at: string;
+  provider: string;
+  model: string;
+  path: string;
+  duration: number;
+  success: boolean;
+  cached: boolean;
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  request_type?: string;
+  model_type?: string;
+  status_code?: number;
+}
+
+interface CloudflareAiGatewayLogsResponse {
+  success: boolean;
+  result: CloudflareAiGatewayLogEntry[];
+  result_info?: {
+    page?: number;
+    per_page?: number;
+    total_count?: number;
+    count?: number;
+  };
+  errors?: Array<{ message: string }>;
+}
+
+interface CloudflareApiErrorDetail {
+  code?: number;
+  message?: string;
+}
+
+interface CloudflareApiErrorResponse {
+  errors?: CloudflareApiErrorDetail[];
+}
+
+export interface FetchCloudflareAiGatewayUsageMetricsOptions {
+  gatewayId?: string;
+  startDate?: Date;
+  endDate?: Date;
+  signal?: AbortSignal;
+}
+
 const AI_GATEWAY_SUPPORTED_MODELS_URL =
   "https://developers.cloudflare.com/ai-gateway/supported-models/index.md";
+const AI_GATEWAY_LOGS_PAGE_SIZE = 50;
 const SCHEMA_BATCH_SIZE = 5;
 const MODEL_SEARCH_PAGE_SIZE = 100;
 const MAX_MODEL_SEARCH_PAGES = 20;
@@ -417,6 +463,192 @@ export async function fetchCloudflareAiGatewayModels(
   }
 
   return [...dedupedModels.values()];
+}
+
+function getCloudflareUsageGatewayId(gatewayId: string | undefined): string {
+  const normalizedGatewayId = gatewayId?.trim();
+  return normalizedGatewayId && normalizedGatewayId.length > 0 ? normalizedGatewayId : "default";
+}
+
+function toCloudflareUsageRequestKind(logEntry: CloudflareAiGatewayLogEntry): string {
+  const candidates = [logEntry.request_type, logEntry.model_type, logEntry.path];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+
+    const normalizedCandidate = candidate.trim();
+    if (normalizedCandidate.length > 0) {
+      return normalizedCandidate;
+    }
+  }
+
+  return "model";
+}
+
+function toCloudflareUsageModelHandle(logEntry: CloudflareAiGatewayLogEntry): string {
+  const normalizedModel = logEntry.model.trim();
+  if (normalizedModel.length === 0) {
+    return normalizedModel;
+  }
+
+  if (normalizedModel.startsWith("@") || normalizedModel.includes("/")) {
+    return normalizedModel;
+  }
+
+  const normalizedProvider = logEntry.provider.trim().toLowerCase();
+  if (normalizedProvider.length === 0 || normalizedProvider === "cloudflare") {
+    return normalizedModel;
+  }
+
+  return `${normalizedProvider}/${normalizedModel}`;
+}
+
+function toRecordedCloudflareGatewayMetric(
+  accountId: string,
+  logEntry: CloudflareAiGatewayLogEntry,
+): RecordedCloudflareRequestMetric | undefined {
+  const recordedAt = Date.parse(logEntry.created_at);
+  if (!Number.isFinite(recordedAt)) {
+    return undefined;
+  }
+
+  const promptTokens = typeof logEntry.tokens_in === "number" ? logEntry.tokens_in : undefined;
+  const completionTokens =
+    typeof logEntry.tokens_out === "number" ? logEntry.tokens_out : undefined;
+  const totalTokens =
+    typeof promptTokens === "number" || typeof completionTokens === "number"
+      ? (promptTokens ?? 0) + (completionTokens ?? 0)
+      : undefined;
+
+  return {
+    accountId,
+    recordedAt,
+    outcome: logEntry.success ? "success" : "error",
+    requestKind: toCloudflareUsageRequestKind(logEntry),
+    modelHandle: toCloudflareUsageModelHandle(logEntry),
+    endpointKind: "gateway",
+    deliveryMode: "unknown",
+    requestedStream: false,
+    gatewayFallbackToDirect: false,
+    totalDurationMs:
+      typeof logEntry.duration === "number" && Number.isFinite(logEntry.duration)
+        ? Math.max(0, logEntry.duration)
+        : 0,
+    errorStatus: logEntry.success ? undefined : logEntry.status_code,
+    usage:
+      typeof totalTokens === "number"
+        ? {
+            promptTokens,
+            completionTokens,
+            totalTokens,
+          }
+        : undefined,
+  };
+}
+
+function extractCloudflareApiErrorMessage(raw: string): string | undefined {
+  try {
+    const parsed = JSON.parse(raw) as CloudflareApiErrorResponse;
+    if (!Array.isArray(parsed.errors) || parsed.errors.length === 0) {
+      return undefined;
+    }
+
+    return parsed.errors
+      .map((error) => {
+        const message = error.message?.trim();
+        if (!message) {
+          return undefined;
+        }
+
+        return typeof error.code === "number" ? `${error.code}: ${message}` : message;
+      })
+      .filter((message): message is string => typeof message === "string" && message.length > 0)
+      .join(", ");
+  } catch {
+    return undefined;
+  }
+}
+
+function createCloudflareAiGatewayLogsRequestError(status: number, raw: string): Error {
+  const errorMessage = extractCloudflareApiErrorMessage(raw);
+
+  if ((status === 401 || status === 403) && /authentication error/i.test(errorMessage ?? raw)) {
+    return new Error(
+      "Cloudflare AI Gateway logs access was denied. Use a Cloudflare API token with AI Gateway - Read permission for usage tracking.",
+    );
+  }
+
+  return new Error(`Cloudflare AI Gateway logs request failed (${status}): ${errorMessage ?? raw}`);
+}
+
+export async function fetchCloudflareAiGatewayUsageMetrics(
+  accountId: string,
+  apiKey: string,
+  options: FetchCloudflareAiGatewayUsageMetricsOptions = {},
+): Promise<RecordedCloudflareRequestMetric[]> {
+  const gatewayId = getCloudflareUsageGatewayId(options.gatewayId);
+  const metrics: RecordedCloudflareRequestMetric[] = [];
+
+  for (let page = 1; ; page += 1) {
+    throwIfAborted(options.signal);
+    const url = new URL(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai-gateway/gateways/${gatewayId}/logs`,
+    );
+    url.searchParams.set("page", page.toString());
+    url.searchParams.set("per_page", AI_GATEWAY_LOGS_PAGE_SIZE.toString());
+    url.searchParams.set("order_by", "created_at");
+    url.searchParams.set("order_by_direction", "desc");
+
+    if (options.startDate) {
+      url.searchParams.set("start_date", options.startDate.toISOString());
+    }
+
+    if (options.endDate) {
+      url.searchParams.set("end_date", options.endDate.toISOString());
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      signal: options.signal,
+    });
+    const raw = await response.text();
+
+    if (!response.ok) {
+      throw createCloudflareAiGatewayLogsRequestError(response.status, raw);
+    }
+
+    const json = parseJson(
+      raw,
+      "Failed to parse Cloudflare AI Gateway logs response",
+    ) as CloudflareAiGatewayLogsResponse;
+
+    if (!json.success) {
+      const errMsg = json.errors?.map((error) => error.message).join(", ") ?? "Unknown error";
+      throw new Error(`Cloudflare AI Gateway logs error: ${errMsg}`);
+    }
+
+    for (const logEntry of json.result) {
+      const metric = toRecordedCloudflareGatewayMetric(accountId, logEntry);
+      if (metric) {
+        metrics.push(metric);
+      }
+    }
+
+    const totalCount = json.result_info?.total_count;
+    if (
+      (typeof totalCount === "number" && page * AI_GATEWAY_LOGS_PAGE_SIZE >= totalCount) ||
+      json.result.length < AI_GATEWAY_LOGS_PAGE_SIZE
+    ) {
+      break;
+    }
+  }
+
+  return metrics;
 }
 
 function normalizeManualModelHandle(modelHandle: string): string | undefined {

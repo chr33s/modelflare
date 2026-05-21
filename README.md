@@ -18,6 +18,7 @@ The extension now ships both desktop and web entrypoints, so it can run in deskt
 - ✨ Inline code completions powered by discovered Cloudflare text generation models with specific Fill-In-The-Middle (FIM) templates for Qwen and DeepSeek models
 - 🛡️ High resilience with exponential backoff on HTTP 429/5xx errors
 - 📈 Persistent local telemetry tracking request counts and tokens across workspace reloads
+- 📊 Copilot-style usage tracker panel with local request/token budgets, health stats, and top-model breakdowns
 - 🌍 Web-extension packaging for vscode.dev/github.dev style browser sessions
 
 ## Setup
@@ -75,6 +76,9 @@ Example manual model configuration:
 | `modelflare.completionSystemPrompt`         | Optional system prompt override for inline completions                                              | `You are a precise code completion engine. Return only the completion with no markdown or explanation.` |
 | `modelflare.completionExcludedLanguages`    | Language IDs that should not receive inline completions                                             | `["plaintext", "markdown", "json", "jsonc", "log"]`                                                     |
 | `modelflare.capabilityOverrides`            | JSON object overriding default model capabilities by model handle                                   | `{}`                                                                                                    |
+| `modelflare.usageTracker.requestBudget`     | Optional local request budget used by the usage tracker                                             | `0`                                                                                                     |
+| `modelflare.usageTracker.tokenBudget`       | Optional local token budget used by the usage tracker                                               | `0`                                                                                                     |
+| `modelflare.usageTracker.resetDayOfMonth`   | Day of month when the local usage tracker resets its cycle                                          | `1`                                                                                                     |
 
 `.vscode/settings.json`
 
@@ -108,6 +112,9 @@ Example manual model configuration:
   "modelflare.reasoningEffort": "medium",
   "modelflare.completionSystemPrompt": "You are a precise code completion engine. Return only the completion with no markdown or explanation.",
   "modelflare.completionExcludedLanguages": ["plaintext", "markdown", "json", "jsonc", "log"],
+  "modelflare.usageTracker.requestBudget": 400,
+  "modelflare.usageTracker.tokenBudget": 500000,
+  "modelflare.usageTracker.resetDayOfMonth": 1,
   "modelflare.capabilityOverrides": {
     "openai/gpt-5-mini": {
       "toolCalling": true,

@@ -1,6 +1,7 @@
 import * as assert from "assert";
 import {
   fetchCloudflareAiGatewayModels,
+  fetchCloudflareAiGatewayUsageMetrics,
   getCloudflareModelHandle,
   fetchCloudflareModels,
   getCloudflareModelFamily,
@@ -336,6 +337,145 @@ suite("cloudflare-client", () => {
           ["openai/gpt-5-mini"],
         );
       }
+    });
+  });
+
+  suite("fetchCloudflareAiGatewayUsageMetrics", () => {
+    test("maps AI Gateway logs into recorded request metrics", async () => {
+      mockFetch(async () =>
+        makeJsonResponse({
+          success: true,
+          result: [
+            {
+              id: "log-1",
+              created_at: "2026-05-20T12:34:56.000Z",
+              provider: "openai",
+              model: "gpt-5-mini",
+              path: "/compat/chat/completions",
+              duration: 812,
+              success: true,
+              cached: false,
+              tokens_in: 120,
+              tokens_out: 30,
+              request_type: "chat-completions",
+            },
+            {
+              id: "log-2",
+              created_at: "2026-05-20T13:00:00.000Z",
+              provider: "cloudflare",
+              model: "@cf/meta/llama-3.3-8b-instruct",
+              path: "/compat/chat/completions",
+              duration: 221,
+              success: false,
+              cached: false,
+              tokens_in: null,
+              tokens_out: null,
+              model_type: "chat",
+              status_code: 429,
+            },
+          ],
+          result_info: { page: 1, per_page: 50, total_count: 2 },
+        }),
+      );
+
+      const result = await fetchCloudflareAiGatewayUsageMetrics("acct", "key", {
+        gatewayId: "my-gateway",
+      });
+
+      assert.deepStrictEqual(result, [
+        {
+          accountId: "acct",
+          recordedAt: Date.parse("2026-05-20T12:34:56.000Z"),
+          outcome: "success",
+          requestKind: "chat-completions",
+          modelHandle: "openai/gpt-5-mini",
+          endpointKind: "gateway",
+          deliveryMode: "unknown",
+          requestedStream: false,
+          gatewayFallbackToDirect: false,
+          totalDurationMs: 812,
+          errorStatus: undefined,
+          usage: {
+            promptTokens: 120,
+            completionTokens: 30,
+            totalTokens: 150,
+          },
+        },
+        {
+          accountId: "acct",
+          recordedAt: Date.parse("2026-05-20T13:00:00.000Z"),
+          outcome: "error",
+          requestKind: "chat",
+          modelHandle: "@cf/meta/llama-3.3-8b-instruct",
+          endpointKind: "gateway",
+          deliveryMode: "unknown",
+          requestedStream: false,
+          gatewayFallbackToDirect: false,
+          totalDurationMs: 221,
+          errorStatus: 429,
+          usage: undefined,
+        },
+      ]);
+    });
+
+    test("paginates, uses the default gateway, and forwards auth and date filters", async () => {
+      const capturedUrls: string[] = [];
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (url, init) => {
+        capturedUrls.push(url.toString());
+        capturedHeaders = init?.headers as Record<string, string>;
+        const page = new URL(url.toString()).searchParams.get("page");
+        return makeJsonResponse({
+          success: true,
+          result:
+            page === "1"
+              ? [
+                  {
+                    id: "log-1",
+                    created_at: "2026-05-20T12:00:00.000Z",
+                    provider: "openai",
+                    model: "gpt-5-mini",
+                    path: "/compat/chat/completions",
+                    duration: 100,
+                    success: true,
+                    cached: false,
+                    tokens_in: 1,
+                    tokens_out: 1,
+                  },
+                ]
+              : [],
+          result_info: { page: Number(page), per_page: 50, total_count: 1 },
+        });
+      });
+
+      await fetchCloudflareAiGatewayUsageMetrics("acct", "api-key", {
+        startDate: new Date("2026-05-01T00:00:00.000Z"),
+        endDate: new Date("2026-05-21T00:00:00.000Z"),
+      });
+
+      assert.ok(capturedUrls[0]?.includes("/gateways/default/logs"), capturedUrls[0]);
+      assert.ok(capturedUrls[0]?.includes("start_date=2026-05-01T00%3A00%3A00.000Z"));
+      assert.ok(capturedUrls[0]?.includes("end_date=2026-05-21T00%3A00%3A00.000Z"));
+      assert.strictEqual(capturedHeaders?.Authorization, "Bearer api-key");
+    });
+
+    test("surfaces an actionable permission error for AI Gateway log access", async () => {
+      mockFetch(async () =>
+        makeTextResponse(
+          JSON.stringify({
+            success: false,
+            errors: [{ code: 10000, message: "Authentication error" }],
+            messages: [],
+            result: null,
+          }),
+          403,
+        ),
+      );
+
+      await assert.rejects(
+        () => fetchCloudflareAiGatewayUsageMetrics("acct", "key", { gatewayId: "my-gateway" }),
+        /AI Gateway - Read permission/,
+      );
     });
   });
 

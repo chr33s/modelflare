@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { CloudflareDetectedCapabilities } from "./cloudflare-model-capabilities";
 import { normalizeCloudflareModelFilter, TEXT_GENERATION_MODEL_FILTER } from "./model-filter";
+import { normalizeUsageTrackerResetDayOfMonth } from "./request-metrics";
 
 export const DEFAULT_MODEL_FILTER = TEXT_GENERATION_MODEL_FILTER;
 export const DEFAULT_INCLUDE_GATEWAY_SUPPORTED_MODELS = true;
@@ -13,6 +14,21 @@ export const DEFAULT_COMPLETION_EXCLUDED_LANGUAGE_IDS = [
   "jsonc",
   "log",
 ] as const;
+export const DEFAULT_USAGE_TRACKER_RESET_DAY_OF_MONTH = 1;
+
+export interface ModelflareUsageTrackerConfiguration {
+  readonly requestBudget?: number;
+  readonly tokenBudget?: number;
+  readonly resetDayOfMonth: number;
+}
+
+function normalizeOptionalPositiveInteger(value: number | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  return Math.floor(value);
+}
 
 export interface ModelflareConfiguration {
   readonly accountId?: string;
@@ -27,6 +43,7 @@ export interface ModelflareConfiguration {
   readonly completionSystemPrompt: string;
   readonly completionExcludedLanguages: readonly string[];
   readonly capabilityOverrides: Record<string, Partial<CloudflareDetectedCapabilities>>;
+  readonly usageTracker: ModelflareUsageTrackerConfiguration;
 }
 
 export function getModelflareConfiguration(): ModelflareConfiguration {
@@ -57,6 +74,18 @@ export function getModelflareConfiguration(): ModelflareConfiguration {
       configuration.get<Record<string, Partial<CloudflareDetectedCapabilities>>>(
         "capabilityOverrides",
       ) ?? {},
+    usageTracker: {
+      requestBudget: normalizeOptionalPositiveInteger(
+        configuration.get<number>("usageTracker.requestBudget"),
+      ),
+      tokenBudget: normalizeOptionalPositiveInteger(
+        configuration.get<number>("usageTracker.tokenBudget"),
+      ),
+      resetDayOfMonth: normalizeUsageTrackerResetDayOfMonth(
+        configuration.get<number>("usageTracker.resetDayOfMonth") ??
+          DEFAULT_USAGE_TRACKER_RESET_DAY_OF_MONTH,
+      ),
+    },
   };
 }
 

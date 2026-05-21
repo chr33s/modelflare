@@ -3,6 +3,8 @@
 .vscode-test/**
 .vscode-test-web/**
 .vscode-test.mjs
+.github/**
+.claude/**
 src/**
 .gitignore
 tsconfig.json
